@@ -16,6 +16,7 @@ from telegram.ext import (
 
 from app.config import Settings
 from app.repos import (
+    get_active_subscriptions,
     create_subscription,
     delete_subscription,
     get_user_by_tg_user_id,
@@ -206,13 +207,23 @@ async def cb_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def cb_admin_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _, _, sources = _deps(context)
+    session_factory, _, sources = _deps(context)
     if not update.callback_query or not update.callback_query.message:
         return
     await _hide_pressed_button(update)
     if not await _is_admin(update, context):
         await update.callback_query.answer("Нет доступа", show_alert=True)
         return
+    # Run an immediate probe so admin gets live diagnostics
+    try:
+        async with session_factory() as session:
+            pairs = await get_active_subscriptions(session)
+            await session.commit()
+        if pairs:
+            _, sub = pairs[0]
+            await sources.fetch_latest(sub, limit=1)
+    except Exception:
+        pass
     status = sources.last_status()
     text = (
         "🧪 Статус источника\n\n"
