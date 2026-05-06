@@ -85,6 +85,7 @@ export function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [runtimeError, setRuntimeError] = useState("");
 
   async function apiFetch(path: string, init?: RequestInit) {
     const r = await fetch(`${apiBase}${path}`, {
@@ -220,6 +221,14 @@ export function App() {
   }
 
   useEffect(() => {
+    const onError = (e: ErrorEvent) => {
+      setRuntimeError(e.message || "Runtime error");
+    };
+    window.addEventListener("error", onError);
+    return () => window.removeEventListener("error", onError);
+  }, []);
+
+  useEffect(() => {
     try {
       tg?.ready();
       tg?.expand();
@@ -257,6 +266,234 @@ export function App() {
 
   const scheme = tg?.colorScheme ?? "dark";
 
+  const selectedCatalog = catalogs.find((c) => c.is_selected);
+
+  function renderFeed() {
+    return (
+      <div className="card feedCard">
+        <div className="sortRow">
+          <button
+            className={`chip ${sortMode === "newest" ? "chipActive" : ""}`}
+            onClick={() => setSortMode("newest")}
+          >
+            Новые
+          </button>
+          <button
+            className={`chip ${sortMode === "best_deals" ? "chipActive" : ""}`}
+            onClick={() => setSortMode("best_deals")}
+          >
+            Выгодные
+          </button>
+        </div>
+
+        {!items.length && !loading && !error ? (
+          <div className="emptyState">
+            <div className="emptyEmoji">🔎</div>
+            <div className="emptyTitle">Пока пусто</div>
+            <div className="emptyText">Дождись, пока мониторинг найдёт новые объявления по твоим подпискам.</div>
+          </div>
+        ) : null}
+
+        {loading ? (
+          <div className="skeletonList">
+            <div className="skeletonCard" />
+            <div className="skeletonCard" />
+            <div className="skeletonCard" />
+          </div>
+        ) : null}
+
+        <div className="list">
+          {items.map((it) => (
+            <div className="itemCard" key={`${it.source}:${it.external_id}`}>
+              {it.photo_url ? <img className="photo" src={it.photo_url} alt={it.title || "item"} /> : null}
+              <div className="itemTitle">{it.title || "Без названия"}</div>
+              <div className="itemRow">
+                <div className="price">{formatPrice(it.price)}</div>
+                <div className="meta">{formatTime(it.first_seen_at)}</div>
+              </div>
+              <div className="meta">{it.city || "Город не указан"}</div>
+              {it.description ? <div className="desc">{it.description}</div> : null}
+              <div className="linkWrap">
+                <a className="link" href={it.url} target="_blank" rel="noreferrer">
+                  Открыть объявление
+                </a>
+              </div>
+              <div className="meta subMeta">
+                Каталог #{it.subscription_id}
+                {it.seller_profile_url ? (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <a className="link" href={it.seller_profile_url} target="_blank" rel="noreferrer">
+                      Профиль продавца
+                    </a>
+                  </>
+                ) : null}
+                {it.is_mock ? " · тестовые данные" : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderCatalogs() {
+    return (
+      <div className="card feedCard">
+        <div className="sectionTitle">Каталоги пользователя</div>
+        <div className="catalogCreate">
+          <input
+            className="input"
+            value={newCatalogName}
+            placeholder="Название каталога"
+            onChange={(e) => setNewCatalogName(e.target.value)}
+          />
+          <select className="input" value={newCatalogCategory} onChange={(e) => setNewCatalogCategory(e.target.value)}>
+            {categories.map((cat) => (
+              <option key={cat.slug} value={cat.slug}>
+                {cat.title}
+              </option>
+            ))}
+          </select>
+          <div className="citySelectWrap">
+            <input
+              className="input"
+              value={newCatalogRegion}
+              placeholder="Выберите город"
+              onChange={(e) => {
+                setNewCatalogRegion(e.target.value);
+                setCitySearchOpen(true);
+              }}
+              onFocus={() => setCitySearchOpen(true)}
+            />
+            {citySearchOpen ? (
+              <div className="cityDropdown">
+                {filteredCities.slice(0, 12).map((city) => (
+                  <button
+                    key={city.slug}
+                    type="button"
+                    className="cityOption"
+                    onClick={() => {
+                      setNewCatalogRegion(city.slug);
+                      setCitySearchOpen(false);
+                    }}
+                  >
+                    {city.title}
+                  </button>
+                ))}
+                {!filteredCities.length ? <div className="cityEmpty">Город не найден</div> : null}
+              </div>
+            ) : null}
+          </div>
+          <input
+            className="input"
+            value={newCatalogQuery}
+            placeholder="Запрос (опц.)"
+            onChange={(e) => setNewCatalogQuery(e.target.value)}
+          />
+          <button className="btn" onClick={createCatalog}>
+            Создать
+          </button>
+        </div>
+
+        <div className="list">
+          {catalogs.map((it) => (
+            <div className="itemCard" key={it.id}>
+              <div className="itemRow">
+                <div className="itemTitle">{it.display_name || `Каталог #${it.id}`}</div>
+                <span className="badge">{it.is_selected ? "Активный" : "Обычный"}</span>
+              </div>
+              <div className="meta">
+                {it.category} · {it.region} · {it.query || "без запроса"}
+              </div>
+              <div className="catalogActions">
+                {!it.is_selected ? (
+                  <button className="btn btnSmall" onClick={() => selectCatalog(it.id)}>
+                    Выбрать
+                  </button>
+                ) : null}
+                <button className="btn btnSmall btnDanger" onClick={() => deleteCatalog(it.id)}>
+                  Удалить
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderNotifications() {
+    return (
+      <div className="card feedCard">
+        <div className="sectionTitle">Последние уведомления</div>
+        {!notifications.length && !error ? (
+          <div className="emptyState">
+            <div className="emptyEmoji">🔔</div>
+            <div className="emptyTitle">Уведомлений пока нет</div>
+            <div className="emptyText">Как только появятся новые позиции, они будут здесь.</div>
+          </div>
+        ) : null}
+        <div className="list">
+          {notifications.map((it) => (
+            <div className="itemCard" key={`n-${it.source}:${it.external_id}`}>
+              <div className="itemTitle">{it.title || "Без названия"}</div>
+              <div className="itemRow">
+                <div className="price">{formatPrice(it.price)}</div>
+                <div className="meta">{formatTime(it.first_seen_at)}</div>
+              </div>
+              <div className="meta">{it.city || "Город не указан"}</div>
+              <div className="linkWrap">
+                <a className="link" href={it.url} target="_blank" rel="noreferrer">
+                  Открыть объявление
+                </a>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderProfile() {
+    return (
+      <div className="card feedCard">
+        <div className="sectionTitle">Профиль пользователя</div>
+        {profile ? (
+          <div className="profileCard">
+            <div className="profileRow">
+              <span className="meta">Имя</span>
+              <strong>{profile.first_name || "—"}</strong>
+            </div>
+            <div className="profileRow">
+              <span className="meta">Username</span>
+              <strong>{profile.username ? `@${profile.username}` : "не указан"}</strong>
+            </div>
+            <div className="profileRow">
+              <span className="meta">Telegram ID</span>
+              <strong>{profile.tg_user_id}</strong>
+            </div>
+            <div className="profileRow">
+              <span className="meta">Роль</span>
+              <strong>{profile.is_admin ? "Администратор" : "Пользователь"}</strong>
+            </div>
+          </div>
+        ) : (
+          <div className="emptyState">
+            <div className="emptyEmoji">👤</div>
+            <div className="emptyTitle">Профиль загружается</div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  let content = renderFeed();
+  if (tab === "catalogs") content = renderCatalogs();
+  if (tab === "notifications") content = renderNotifications();
+  if (tab === "profile") content = renderProfile();
+
   return (
     <div className="page">
       <div className="container">
@@ -272,6 +509,7 @@ export function App() {
                 ) : null}
                 {scheme === "dark" ? "Тёмная" : "Светлая"} тема
                 {userRole === "admin" ? " · админ" : ""}
+                {selectedCatalog ? ` · ${selectedCatalog.display_name || "активный каталог"}` : ""}
               </div>
             </div>
             <button className="btn" onClick={loadFeed} disabled={loading}>
@@ -303,6 +541,13 @@ export function App() {
           </div>
         </div>
 
+        {runtimeError ? (
+          <div className="error">
+            <div className="errorTitle">Ошибка интерфейса</div>
+            <div>{runtimeError}</div>
+          </div>
+        ) : null}
+
         {error ? (
           <div className="error">
             <div className="errorTitle">Ошибка</div>
@@ -315,219 +560,7 @@ export function App() {
           </div>
         ) : null}
 
-        {tab === "catalogs" ? (
-          <div className="card feedCard">
-            <div className="sectionTitle">Каталоги пользователя</div>
-            <div className="catalogCreate">
-              <input
-                className="input"
-                value={newCatalogName}
-                placeholder="Название каталога"
-                onChange={(e) => setNewCatalogName(e.target.value)}
-              />
-              <select
-                className="input"
-                value={newCatalogCategory}
-                onChange={(e) => setNewCatalogCategory(e.target.value)}
-              >
-                {categories.map((cat) => (
-                  <option key={cat.slug} value={cat.slug}>
-                    {cat.title}
-                  </option>
-                ))}
-              </select>
-              <div className="citySelectWrap">
-                <input
-                  className="input"
-                  value={newCatalogRegion}
-                  placeholder="Выберите город"
-                  onChange={(e) => {
-                    setNewCatalogRegion(e.target.value);
-                    setCitySearchOpen(true);
-                  }}
-                  onFocus={() => setCitySearchOpen(true)}
-                />
-                {citySearchOpen ? (
-                  <div className="cityDropdown">
-                    {filteredCities.slice(0, 12).map((city) => (
-                      <button
-                        key={city.slug}
-                        type="button"
-                        className="cityOption"
-                        onClick={() => {
-                          setNewCatalogRegion(city.slug);
-                          setCitySearchOpen(false);
-                        }}
-                      >
-                        {city.title}
-                      </button>
-                    ))}
-                    {!filteredCities.length ? <div className="cityEmpty">Город не найден</div> : null}
-                  </div>
-                ) : null}
-              </div>
-              <input
-                className="input"
-                value={newCatalogQuery}
-                placeholder="Запрос (опц.)"
-                onChange={(e) => setNewCatalogQuery(e.target.value)}
-              />
-              <button className="btn" onClick={createCatalog}>
-                Создать
-              </button>
-            </div>
-
-            <div className="list">
-              {catalogs.map((it) => (
-                <div className="itemCard" key={it.id}>
-                  <div className="itemRow">
-                    <div className="itemTitle">{it.display_name || `Каталог #${it.id}`}</div>
-                    <span className="badge">{it.is_selected ? "Активный" : "Обычный"}</span>
-                  </div>
-                  <div className="meta">
-                    {it.category} · {it.region} · {it.query || "без запроса"}
-                  </div>
-                  <div className="catalogActions">
-                    {!it.is_selected ? (
-                      <button className="btn btnSmall" onClick={() => selectCatalog(it.id)}>
-                        Выбрать
-                      </button>
-                    ) : null}
-                    <button className="btn btnSmall btnDanger" onClick={() => deleteCatalog(it.id)}>
-                      Удалить
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : tab === "feed" ? (
-          <div className="card feedCard">
-            <div className="sortRow">
-              <button
-                className={`chip ${sortMode === "newest" ? "chipActive" : ""}`}
-                onClick={() => setSortMode("newest")}
-              >
-                Новые
-              </button>
-              <button
-                className={`chip ${sortMode === "best_deals" ? "chipActive" : ""}`}
-                onClick={() => setSortMode("best_deals")}
-              >
-                Выгодные
-              </button>
-            </div>
-          {!items.length && !loading && !error ? (
-            <div className="emptyState">
-              <div className="emptyEmoji">🔎</div>
-              <div className="emptyTitle">Пока пусто</div>
-              <div className="emptyText">
-                Дождись, пока мониторинг найдёт новые объявления по твоим подпискам.
-              </div>
-            </div>
-          ) : null}
-
-          {loading ? (
-            <div className="skeletonList">
-              <div className="skeletonCard" />
-              <div className="skeletonCard" />
-              <div className="skeletonCard" />
-            </div>
-          ) : null}
-
-          <div className="list">
-            {items.map((it) => (
-              <div className="itemCard" key={`${it.source}:${it.external_id}`}>
-                {it.photo_url ? <img className="photo" src={it.photo_url} alt={it.title || "item"} /> : null}
-                <div className="itemTitle">{it.title || "Без названия"}</div>
-                <div className="itemRow">
-                  <div className="price">{formatPrice(it.price)}</div>
-                  <div className="meta">{formatTime(it.first_seen_at)}</div>
-                </div>
-                <div className="meta">{it.city || "Город не указан"}</div>
-                {it.description ? <div className="desc">{it.description}</div> : null}
-                <div className="linkWrap">
-                  <a className="link" href={it.url} target="_blank" rel="noreferrer">
-                    Открыть объявление
-                  </a>
-                </div>
-                <div className="meta subMeta">
-                  Подписка #{it.subscription_id}
-                  {it.seller_profile_url ? (
-                    <>
-                      {" "}
-                      ·{" "}
-                      <a className="link" href={it.seller_profile_url} target="_blank" rel="noreferrer">
-                        Профиль продавца
-                      </a>
-                    </>
-                  ) : null}
-                  {it.is_mock ? " · тестовые данные" : ""}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        ) : (
-          tab === "notifications" ? (
-          <div className="card feedCard">
-            <div className="sectionTitle">Последние уведомления</div>
-            {!notifications.length && !error ? (
-              <div className="emptyState">
-                <div className="emptyEmoji">🔔</div>
-                <div className="emptyTitle">Уведомлений пока нет</div>
-                <div className="emptyText">Как только появятся новые позиции, они будут здесь.</div>
-              </div>
-            ) : null}
-            <div className="list">
-              {notifications.map((it) => (
-                <div className="itemCard" key={`n-${it.source}:${it.external_id}`}>
-                  <div className="itemTitle">{it.title || "Без названия"}</div>
-                  <div className="itemRow">
-                    <div className="price">{formatPrice(it.price)}</div>
-                    <div className="meta">{formatTime(it.first_seen_at)}</div>
-                  </div>
-                  <div className="meta">{it.city || "Город не указан"}</div>
-                  <div className="linkWrap">
-                    <a className="link" href={it.url} target="_blank" rel="noreferrer">
-                      Открыть объявление
-                    </a>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          ) : (
-            <div className="card feedCard">
-              <div className="sectionTitle">Профиль пользователя</div>
-              {profile ? (
-                <div className="profileCard">
-                  <div className="profileRow">
-                    <span className="meta">Имя</span>
-                    <strong>{profile.first_name || "—"}</strong>
-                  </div>
-                  <div className="profileRow">
-                    <span className="meta">Username</span>
-                    <strong>{profile.username ? `@${profile.username}` : "не указан"}</strong>
-                  </div>
-                  <div className="profileRow">
-                    <span className="meta">Telegram ID</span>
-                    <strong>{profile.tg_user_id}</strong>
-                  </div>
-                  <div className="profileRow">
-                    <span className="meta">Роль</span>
-                    <strong>{profile.is_admin ? "Администратор" : "Пользователь"}</strong>
-                  </div>
-                </div>
-              ) : (
-                <div className="emptyState">
-                  <div className="emptyEmoji">👤</div>
-                  <div className="emptyTitle">Профиль загружается</div>
-                </div>
-              )}
-            </div>
-          )
-        )}
+        {content}
       </div>
     </div>
   );
