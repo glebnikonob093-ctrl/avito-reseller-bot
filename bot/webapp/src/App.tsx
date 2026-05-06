@@ -73,61 +73,75 @@ export function App() {
   const scheme = tg?.colorScheme ?? "dark";
 
   return (
-    <div className="container">
-      <div className="header">
-        <div>
-          <div className="title">Лента новых объявлений</div>
-          <div className="meta">
-            {items.length ? (
-              <>
-                <span className="badge">{items.length} шт.</span> ·{" "}
-              </>
-            ) : null}
-            {scheme === "dark" ? "Тёмная" : "Светлая"} тема
+    <div className="page">
+      <div className="container">
+        <div className="headerCard">
+          <div className="header">
+            <div>
+              <div className="title">Лента новых объявлений</div>
+              <div className="meta">
+                {items.length ? (
+                  <>
+                    <span className="badge">{items.length} шт.</span> ·{" "}
+                  </>
+                ) : null}
+                {scheme === "dark" ? "Тёмная" : "Светлая"} тема
+              </div>
+            </div>
+            <button className="btn" onClick={loadFeed} disabled={loading}>
+              {loading ? "Обновляю…" : "Обновить"}
+            </button>
           </div>
         </div>
-        <button className="btn" onClick={loadFeed} disabled={loading}>
-          {loading ? "Обновляю…" : "Обновить"}
-        </button>
-      </div>
 
-      {error ? (
-        <div className="error">
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Ошибка</div>
-          <div>{error}</div>
-          {error.includes("User not found") ? (
-            <div style={{ marginTop: 8, opacity: 0.9 }}>
-              Открой бота и выполни <code>/start</code>, затем попробуй снова.
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="card" style={{ marginTop: 12 }}>
-        {!items.length && !loading && !error ? (
-          <div style={{ opacity: 0.85 }}>
-            Пока пусто. Дождись, пока мониторинг найдёт новые объявления по твоим подпискам.
+        {error ? (
+          <div className="error">
+            <div className="errorTitle">Ошибка</div>
+            <div>{error}</div>
+            {error.includes("User not found") ? (
+              <div style={{ marginTop: 8, opacity: 0.9 }}>
+                Открой бота и выполни <code>/start</code>, затем попробуй снова.
+              </div>
+            ) : null}
           </div>
         ) : null}
 
-        <div className="list">
-          {items.map((it) => (
-            <div className="card" key={`${it.source}:${it.external_id}`}>
-              <div className="itemTitle">{it.title || "Без названия"}</div>
-              <div className="itemRow">
-                <div className="price">{formatPrice(it.price)}</div>
-                <div className="meta">{formatTime(it.first_seen_at)}</div>
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <a className="link" href={it.url} target="_blank" rel="noreferrer">
-                  {it.url}
-                </a>
-              </div>
-              <div className="meta" style={{ marginTop: 8 }}>
-                Подписка #{it.subscription_id}
+        <div className="card feedCard">
+          {!items.length && !loading && !error ? (
+            <div className="emptyState">
+              <div className="emptyEmoji">🔎</div>
+              <div className="emptyTitle">Пока пусто</div>
+              <div className="emptyText">
+                Дождись, пока мониторинг найдёт новые объявления по твоим подпискам.
               </div>
             </div>
-          ))}
+          ) : null}
+
+          {loading ? (
+            <div className="skeletonList">
+              <div className="skeletonCard" />
+              <div className="skeletonCard" />
+              <div className="skeletonCard" />
+            </div>
+          ) : null}
+
+          <div className="list">
+            {items.map((it) => (
+              <div className="itemCard" key={`${it.source}:${it.external_id}`}>
+                <div className="itemTitle">{it.title || "Без названия"}</div>
+                <div className="itemRow">
+                  <div className="price">{formatPrice(it.price)}</div>
+                  <div className="meta">{formatTime(it.first_seen_at)}</div>
+                </div>
+                <div className="linkWrap">
+                  <a className="link" href={it.url} target="_blank" rel="noreferrer">
+                    Открыть объявление
+                  </a>
+                </div>
+                <div className="meta subMeta">Подписка #{it.subscription_id}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
