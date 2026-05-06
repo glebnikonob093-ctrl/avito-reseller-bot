@@ -73,19 +73,6 @@ def _utc_now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
-def _default_cities() -> list[dict[str, str]]:
-    return [
-        {"slug": "moskva", "title": "Москва"},
-        {"slug": "sankt-peterburg", "title": "Санкт-Петербург"},
-        {"slug": "ekaterinburg", "title": "Екатеринбург"},
-        {"slug": "novosibirsk", "title": "Новосибирск"},
-        {"slug": "kazan", "title": "Казань"},
-        {"slug": "nizhniy_novgorod", "title": "Нижний Новгород"},
-        {"slug": "krasnodar", "title": "Краснодар"},
-        {"slug": "samara", "title": "Самара"},
-    ]
-
-
 def _parse_init_data(init_data: str) -> dict[str, str]:
     # initData is querystring-like: "query_id=...&user=...&auth_date=...&hash=..."
     return {k: v for k, v in parse_qsl(init_data, keep_blank_values=True)}
@@ -325,8 +312,8 @@ def create_api_app(
     @app.get("/api/cities")
     async def cities(q: str = Query(default="", max_length=100), limit: int = Query(default=20, ge=1, le=50)) -> dict[str, Any]:
         query = q.strip()
-        if not query:
-            return {"items": _default_cities()}
+        if len(query) < 2:
+            return {"items": []}
         try:
             async with httpx.AsyncClient(timeout=8.0, headers={"User-Agent": "avito-reseller-miniapp/1.0"}) as client:
                 r = await client.get(
@@ -335,27 +322,45 @@ def create_api_app(
                         "format": "jsonv2",
                         "countrycodes": "ru",
                         "q": query,
-                        "limit": limit,
-                        "addressdetails": 0,
+                        "limit": max(limit * 2, 30),
+                        "addressdetails": 1,
+                        "accept-language": "ru",
                     },
                 )
                 r.raise_for_status()
                 rows = r.json()
             items: list[dict[str, str]] = []
             used: set[str] = set()
+            allowed_types = {
+                "city",
+                "town",
+                "village",
+                "hamlet",
+                "municipality",
+                "isolated_dwelling",
+                "suburb",
+                "quarter",
+                "allotments",
+            }
             for row in rows:
+                row_type = str(row.get("type") or "").lower()
+                row_class = str(row.get("class") or "").lower()
+                addresstype = str(row.get("addresstype") or "").lower()
+                if row_type not in allowed_types and addresstype not in allowed_types:
+                    continue
+                if row_class not in {"place", "boundary"}:
+                    continue
                 name = str(row.get("display_name") or "").split(",")[0].strip()
                 slug = str(row.get("name") or name).lower().replace(" ", "-")
                 if not name or slug in used:
                     continue
                 used.add(slug)
                 items.append({"slug": slug, "title": name})
-            if items:
-                return {"items": items}
+                if len(items) >= limit:
+                    break
+            return {"items": items}
         except Exception:
-            pass
-        fallback = [c for c in _default_cities() if query.lower() in c["title"].lower() or query.lower() in c["slug"]]
-        return {"items": fallback[:limit]}
+            return {"items": []}
 
     return app
 

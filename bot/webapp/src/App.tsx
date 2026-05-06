@@ -80,10 +80,11 @@ export function App() {
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [cities, setCities] = useState<City[]>([]);
+  const [citiesLoading, setCitiesLoading] = useState(false);
   const [citySearchOpen, setCitySearchOpen] = useState(false);
   const [newCatalogName, setNewCatalogName] = useState("");
-  const [newCatalogCategory, setNewCatalogCategory] = useState("telefony");
-  const [newCatalogRegion, setNewCatalogRegion] = useState("moskva");
+  const [newCatalogCategory, setNewCatalogCategory] = useState("");
+  const [newCatalogRegion, setNewCatalogRegion] = useState("");
   const [newCatalogQuery, setNewCatalogQuery] = useState("");
   const [items, setItems] = useState<FeedItem[]>([]);
   const [notifications, setNotifications] = useState<FeedItem[]>([]);
@@ -167,35 +168,50 @@ export function App() {
       const body = await apiFetch("/api/categories");
       const rows = Array.isArray(body?.items) ? body.items : [];
       setCategories(rows);
-      if (rows.length && !rows.some((r: Category) => r.slug === newCatalogCategory)) {
-        setNewCatalogCategory(rows[0].slug);
-      }
     } catch {
       // optional endpoint
     }
   }
 
-  async function loadCities() {
-    const q = encodeURIComponent(newCatalogRegion.trim());
+  async function loadCities(query: string) {
+    const normalized = query.trim();
+    if (normalized.length < 2) {
+      setCities([]);
+      return;
+    }
+    const q = encodeURIComponent(normalized);
+    setCitiesLoading(true);
     try {
       const body = await apiFetch(`/api/cities?q=${q}&limit=25`);
       const rows = Array.isArray(body?.items) ? body.items : [];
       setCities(rows);
     } catch {
-      // optional endpoint
+      setCities([]);
+    } finally {
+      setCitiesLoading(false);
     }
   }
 
   async function createCatalog() {
     setError("");
+    const category = newCatalogCategory.trim();
+    const region = newCatalogRegion.trim();
+    if (!category) {
+      setError("Выберите категорию");
+      return;
+    }
+    if (!region) {
+      setError("Выберите город/населённый пункт");
+      return;
+    }
     try {
       await apiFetch("/api/catalogs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           display_name: newCatalogName.trim() || "Мой каталог",
-          category: newCatalogCategory,
-          region: newCatalogRegion.trim() || "moskva",
+          category,
+          region,
           query: newCatalogQuery.trim(),
           select_now: true,
         }),
@@ -253,7 +269,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    void loadCities();
+    const t = window.setTimeout(() => {
+      void loadCities(newCatalogRegion);
+    }, 300);
+    return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newCatalogRegion]);
 
@@ -269,11 +288,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  const filteredCities = cities.filter((c) => {
-    const q = newCatalogRegion.trim().toLowerCase();
-    if (!q) return true;
-    return c.title.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q);
-  });
+  const canCreateCatalog = Boolean(newCatalogCategory.trim() && newCatalogRegion.trim());
 
   const scheme = tg?.colorScheme ?? "dark";
 
@@ -361,6 +376,7 @@ export function App() {
             onChange={(e) => setNewCatalogName(e.target.value)}
           />
           <select className="input" value={newCatalogCategory} onChange={(e) => setNewCatalogCategory(e.target.value)}>
+            <option value="">Выберите категорию</option>
             {categories.map((cat) => (
               <option key={cat.slug} value={cat.slug}>
                 {cat.title}
@@ -380,20 +396,26 @@ export function App() {
             />
             {citySearchOpen ? (
               <div className="cityDropdown">
-                {filteredCities.slice(0, 12).map((city) => (
+                {cities.slice(0, 12).map((city) => (
                   <button
                     key={city.slug}
                     type="button"
                     className="cityOption"
                     onClick={() => {
-                      setNewCatalogRegion(city.slug);
+                      setNewCatalogRegion(city.title);
                       setCitySearchOpen(false);
                     }}
                   >
                     {city.title}
                   </button>
                 ))}
-                {!filteredCities.length ? <div className="cityEmpty">Город не найден</div> : null}
+                {citiesLoading ? <div className="cityEmpty">Ищу населённые пункты...</div> : null}
+                {!citiesLoading && newCatalogRegion.trim().length < 2 ? (
+                  <div className="cityEmpty">Введите минимум 2 символа</div>
+                ) : null}
+                {!citiesLoading && newCatalogRegion.trim().length >= 2 && !cities.length ? (
+                  <div className="cityEmpty">Населённый пункт не найден</div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -403,7 +425,7 @@ export function App() {
             placeholder="Запрос (опц.)"
             onChange={(e) => setNewCatalogQuery(e.target.value)}
           />
-          <button className="btn" onClick={createCatalog}>
+          <button className="btn" onClick={createCatalog} disabled={!canCreateCatalog}>
             Создать
           </button>
         </div>
