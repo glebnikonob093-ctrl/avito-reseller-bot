@@ -26,6 +26,7 @@ from app.repos import (
     upsert_user,
     update_catalog,
 )
+from app.sources.avito_public_web import AvitoPublicWebSource
 
 
 @dataclass(frozen=True)
@@ -143,8 +144,14 @@ def create_api_app(
     session_factory: async_sessionmaker[AsyncSession],
     bot_token: str,
     allowed_origins: list[str] | None = None,
+    source_proxy_url: str = "",
+    max_requests_per_minute: int = 20,
 ) -> FastAPI:
     app = FastAPI(title="AvitoResellerBot API", version="0.1")
+    live_source = AvitoPublicWebSource(
+        max_requests_per_minute=max_requests_per_minute,
+        proxy_url=source_proxy_url,
+    )
 
     if allowed_origins:
         app.add_middleware(
@@ -202,6 +209,55 @@ def create_api_app(
             )
             await session.commit()
         return {"items": items, "sort": sort_by}
+
+    @app.get("/api/feed/live")
+    async def feed_live(limit: int = 5, catalog_id: int | None = None, user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:
+        safe_limit = max(1, min(5, int(limit)))
+        async with session_factory() as session:
+            db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
+            if not db_user:
+                db_user = await upsert_user(session, tg_user_id=user.tg_user_id, chat_id=user.tg_user_id)
+            catalogs_rows = await list_catalogs(session, user_id=db_user.id)
+            await session.commit()
+
+        if not catalogs_rows:
+            return {"items": [], "source": "avito_public_web", "live": True}
+
+        selected = None
+        if catalog_id is not None:
+            for c in catalogs_rows:
+                if c.id == catalog_id:
+                    selected = c
+                    break
+        if selected is None:
+            selected = next((c for c in catalogs_rows if bool(c.is_selected)), catalogs_rows[0])
+
+        try:
+            listings = await live_source.fetch_latest(selected, limit=safe_limit)
+        except Exception:
+            listings = []
+
+        items: list[dict[str, Any]] = []
+        for it in listings:
+            items.append(
+                {
+                    "title": it.title,
+                    "price": it.price,
+                    "url": it.url,
+                    "first_seen_at": it.published_at.isoformat() if it.published_at else None,
+                    "subscription_id": selected.id,
+                    "external_id": it.external_id,
+                    "source": "avito_public_web",
+                    "city": it.city,
+                    "photo_url": it.photo_url,
+                    "description": it.description,
+                    "seller_profile_url": it.seller_profile_url,
+                    "is_mock": bool(it.is_mock),
+                    "deal_score": 0,
+                    "work_status": "new",
+                }
+            )
+        return {"items": items, "source": "avito_public_web", "live": True}
 
     @app.post("/api/work-status")
     async def update_work_status(payload: WorkStatusUpdate, user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:
@@ -401,6 +457,10 @@ def create_api_app(
             return {"items": items}
         except Exception:
             return {"items": []}
+
+    @app.on_event("shutdown")
+    async def _close_live_source() -> None:
+        await live_source.aclose()
 
     return app
 

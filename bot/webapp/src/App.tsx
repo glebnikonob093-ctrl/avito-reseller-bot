@@ -100,6 +100,7 @@ export function App() {
   const [userRole, setUserRole] = useState<"user" | "admin">("user");
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingLive, setLoadingLive] = useState(false);
   const [error, setError] = useState<string>("");
   const [runtimeError, setRuntimeError] = useState("");
   const isApiReady = initData.trim().length > 0;
@@ -146,6 +147,24 @@ export function App() {
       setError(e?.message ? String(e.message) : "Не удалось загрузить ленту");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadLiveFeed() {
+    if (!isApiReady) return;
+    setLoadingLive(true);
+    setError("");
+    try {
+      const selected = catalogs.find((c) => c.is_selected);
+      const qs = new URLSearchParams();
+      qs.set("limit", "5");
+      if (selected) qs.set("catalog_id", String(selected.id));
+      const body = await apiFetch(`/api/feed/live?${qs.toString()}`);
+      setItems(Array.isArray(body?.items) ? body.items : []);
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : "Не удалось загрузить live-объявления Avito");
+    } finally {
+      setLoadingLive(false);
     }
   }
 
@@ -385,6 +404,9 @@ export function App() {
             onClick={() => setSortMode("best_deals")}
           >
             Выгодные
+          </button>
+          <button className="chip" onClick={() => void loadLiveFeed()} disabled={loadingLive}>
+            {loadingLive ? "Live..." : "Тест Avito (5)"}
           </button>
         </div>
         <div className="sortRow" style={{ marginTop: 8, flexWrap: "wrap" }}>

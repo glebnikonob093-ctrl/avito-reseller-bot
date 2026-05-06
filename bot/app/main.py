@@ -83,6 +83,8 @@ async def _post_init(app: Application) -> None:
         session_factory=session_factory,
         bot_token=settings.bot_token,
         allowed_origins=allowed_origins,
+        source_proxy_url=settings.source_proxy_url,
+        max_requests_per_minute=settings.max_requests_per_minute,
     )
     config = uvicorn.Config(
         api_app,
