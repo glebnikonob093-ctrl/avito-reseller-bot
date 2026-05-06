@@ -20,4 +20,23 @@ async def create_all(engine: AsyncEngine) -> None:
                 await conn.exec_driver_sql("ALTER TABLE seen_items ADD COLUMN title VARCHAR(300)")
             if "price" not in existing:
                 await conn.exec_driver_sql("ALTER TABLE seen_items ADD COLUMN price INTEGER")
+            if "city" not in existing:
+                await conn.exec_driver_sql("ALTER TABLE seen_items ADD COLUMN city VARCHAR(120)")
+            if "photo_url" not in existing:
+                await conn.exec_driver_sql("ALTER TABLE seen_items ADD COLUMN photo_url VARCHAR(800)")
+            if "description" not in existing:
+                await conn.exec_driver_sql("ALTER TABLE seen_items ADD COLUMN description VARCHAR(800)")
+            if "seller_profile_url" not in existing:
+                await conn.exec_driver_sql("ALTER TABLE seen_items ADD COLUMN seller_profile_url VARCHAR(800)")
+            if "is_mock" not in existing:
+                await conn.exec_driver_sql("ALTER TABLE seen_items ADD COLUMN is_mock BOOLEAN DEFAULT 0")
+
+            sub_cols = await conn.execute(text("PRAGMA table_info('subscriptions')"))
+            sub_existing = {row[1] for row in sub_cols.fetchall()}
+            if "display_name" not in sub_existing:
+                await conn.exec_driver_sql("ALTER TABLE subscriptions ADD COLUMN display_name VARCHAR(120)")
+                await conn.exec_driver_sql("UPDATE subscriptions SET display_name = '' WHERE display_name IS NULL")
+            if "is_selected" not in sub_existing:
+                await conn.exec_driver_sql("ALTER TABLE subscriptions ADD COLUMN is_selected BOOLEAN DEFAULT 1")
+                await conn.exec_driver_sql("UPDATE subscriptions SET is_selected = 1 WHERE is_selected IS NULL")
 

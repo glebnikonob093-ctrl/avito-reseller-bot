@@ -19,6 +19,7 @@ from app.repos import (
     delete_subscription,
     get_subscription,
     list_subscriptions,
+    select_catalog,
     set_subscription_paused,
     upsert_user,
 )
@@ -196,6 +197,7 @@ async def sub_add_pmax(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             price_min=context.user_data.get("price_min"),
             price_max=price_max,
         )
+        await select_catalog(session, user_id=u.id, catalog_id=sub.id)
         await session.commit()
 
     context.user_data.clear()
@@ -296,8 +298,7 @@ async def sub_peek(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.callback_query.answer("Подписка не найдена", show_alert=True)
         return
     try:
-        src = sources.get(sub.source)
-        listings = await src.fetch_latest(sub, limit=10)
+        listings = await sources.fetch_latest(sub, limit=10)
     except Exception:
         await update.callback_query.answer("Источник временно недоступен", show_alert=True)
         return

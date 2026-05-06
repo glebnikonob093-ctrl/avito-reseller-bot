@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from app.models import Subscription
 from app.sources.base import ListingsSource
 
 
@@ -20,4 +21,17 @@ class SourceRegistry:
 
     def as_mapping(self) -> Mapping[str, ListingsSource]:
         return dict(self._by_key)
+
+    async def fetch_latest(self, sub: Subscription, limit: int):
+        primary = self.get(sub.source)
+        try:
+            items = await primary.fetch_latest(sub, limit=limit)
+            if items:
+                return items
+        except Exception:
+            pass
+        fallback = self._by_key.get("mock_fallback")
+        if fallback:
+            return await fallback.fetch_latest(sub, limit=limit)
+        return []
 

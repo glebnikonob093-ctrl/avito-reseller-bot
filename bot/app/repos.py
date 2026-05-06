@@ -44,6 +44,8 @@ async def create_subscription(
     query: str = "",
     price_min: int | None = None,
     price_max: int | None = None,
+    display_name: str = "",
+    is_selected: bool = True,
 ) -> Subscription:
     sub = Subscription(
         user_id=user_id,
@@ -53,6 +55,8 @@ async def create_subscription(
         query=query,
         price_min=price_min,
         price_max=price_max,
+        display_name=display_name,
+        is_selected=is_selected,
     )
     session.add(sub)
     await session.flush()
@@ -85,6 +89,11 @@ async def mark_seen(
     url: str,
     title: str | None = None,
     price: int | None = None,
+    city: str | None = None,
+    photo_url: str | None = None,
+    description: str | None = None,
+    seller_profile_url: str | None = None,
+    is_mock: bool = False,
 ) -> bool:
     """
     Returns True if item was newly inserted, False if it already existed.
@@ -97,6 +106,11 @@ async def mark_seen(
         url=url,
         title=title,
         price=price,
+        city=city,
+        photo_url=photo_url,
+        description=description,
+        seller_profile_url=seller_profile_url,
+        is_mock=is_mock,
     )
     try:
         async with session.begin_nested():
@@ -113,12 +127,7 @@ async def get_user_by_tg_user_id(session: AsyncSession, *, tg_user_id: int) -> U
 
 
 async def list_feed_items(session: AsyncSession, *, user_id: int, limit: int) -> list[dict]:
-    q = (
-        select(SeenItem)
-        .where(SeenItem.user_id == user_id)
-        .order_by(SeenItem.first_seen_at.desc())
-        .limit(limit)
-    )
+    q = select(SeenItem).where(SeenItem.user_id == user_id).order_by(SeenItem.first_seen_at.desc()).limit(limit)
     rows = list((await session.execute(q)).scalars().all())
     out: list[dict] = []
     for it in rows:
@@ -131,6 +140,79 @@ async def list_feed_items(session: AsyncSession, *, user_id: int, limit: int) ->
                 "subscription_id": it.subscription_id,
                 "external_id": it.external_id,
                 "source": it.source,
+                "city": it.city,
+                "photo_url": it.photo_url,
+                "description": it.description,
+                "seller_profile_url": it.seller_profile_url,
+                "is_mock": bool(it.is_mock),
+            }
+        )
+    return out
+
+
+def _deal_score_for_seen(item: SeenItem, catalog: Subscription) -> float:
+    score = 0.0
+    if item.price is not None:
+        if catalog.price_max is not None and item.price <= catalog.price_max:
+            score += 25
+        if catalog.price_min is not None and item.price >= catalog.price_min:
+            score += 10
+        if catalog.price_max is not None and catalog.price_min is not None:
+            mid = (catalog.price_max + catalog.price_min) / 2
+            score += max(0, 20 - abs(item.price - mid) / max(1, mid) * 20)
+    if catalog.query and item.title:
+        q = catalog.query.lower().strip()
+        t = item.title.lower()
+        if q and q in t:
+            score += 30
+    if item.is_mock:
+        score -= 2
+    return score
+
+
+async def list_feed_items_for_catalog(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    catalog_id: int | None,
+    sort_by: str,
+    limit: int,
+) -> list[dict]:
+    sub_q = select(Subscription).where(Subscription.user_id == user_id)
+    if catalog_id is not None:
+        sub_q = sub_q.where(Subscription.id == catalog_id)
+    else:
+        sub_q = sub_q.where(Subscription.is_selected.is_(True))
+    catalogs = list((await session.execute(sub_q)).scalars().all())
+    if not catalogs:
+        return []
+
+    catalog_ids = [c.id for c in catalogs]
+    q = select(SeenItem).where(SeenItem.user_id == user_id).where(SeenItem.subscription_id.in_(catalog_ids))
+    rows = list((await session.execute(q)).scalars().all())
+    if sort_by == "best_deals":
+        catalogs_by_id = {c.id: c for c in catalogs}
+        rows.sort(key=lambda it: _deal_score_for_seen(it, catalogs_by_id[it.subscription_id]), reverse=True)
+    else:
+        rows.sort(key=lambda it: it.first_seen_at, reverse=True)
+    rows = rows[:limit]
+
+    out: list[dict] = []
+    for it in rows:
+        out.append(
+            {
+                "title": it.title,
+                "price": it.price,
+                "url": it.url,
+                "first_seen_at": it.first_seen_at.isoformat() if it.first_seen_at else None,
+                "subscription_id": it.subscription_id,
+                "external_id": it.external_id,
+                "source": it.source,
+                "city": it.city,
+                "photo_url": it.photo_url,
+                "description": it.description,
+                "seller_profile_url": it.seller_profile_url,
+                "is_mock": bool(it.is_mock),
             }
         )
     return out
@@ -141,8 +223,91 @@ async def get_active_subscriptions(session: AsyncSession) -> list[tuple[User, Su
         select(User, Subscription)
         .join(Subscription, Subscription.user_id == User.id)
         .where(Subscription.is_paused.is_(False))
+        .where(Subscription.is_selected.is_(True))
         .order_by(Subscription.id.asc())
     )
     rows = (await session.execute(q)).all()
     return [(row[0], row[1]) for row in rows]
+
+
+async def list_catalogs(session: AsyncSession, *, user_id: int) -> list[Subscription]:
+    q = select(Subscription).where(Subscription.user_id == user_id).order_by(Subscription.id.asc())
+    return list((await session.execute(q)).scalars().all())
+
+
+async def create_catalog(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    source: str,
+    display_name: str,
+    category: str,
+    region: str,
+    query: str = "",
+    price_min: int | None = None,
+    price_max: int | None = None,
+    select_now: bool = True,
+) -> Subscription:
+    if select_now:
+        await session.execute(
+            update(Subscription).where(Subscription.user_id == user_id).values(is_selected=False)
+        )
+    return await create_subscription(
+        session,
+        user_id=user_id,
+        source=source,
+        category=category,
+        region=region,
+        query=query,
+        price_min=price_min,
+        price_max=price_max,
+        display_name=display_name.strip(),
+        is_selected=select_now,
+    )
+
+
+async def update_catalog(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    catalog_id: int,
+    display_name: str | None = None,
+    category: str | None = None,
+    region: str | None = None,
+    query: str | None = None,
+    price_min: int | None = None,
+    price_max: int | None = None,
+    is_paused: bool | None = None,
+) -> Subscription | None:
+    sub = await get_subscription(session, user_id=user_id, subscription_id=catalog_id)
+    if not sub:
+        return None
+    if display_name is not None:
+        sub.display_name = display_name.strip()
+    if category is not None:
+        sub.category = category
+    if region is not None:
+        sub.region = region
+    if query is not None:
+        sub.query = query
+    if price_min is not None:
+        sub.price_min = price_min
+    if price_max is not None:
+        sub.price_max = price_max
+    if is_paused is not None:
+        sub.is_paused = is_paused
+    await session.flush()
+    return sub
+
+
+async def select_catalog(session: AsyncSession, *, user_id: int, catalog_id: int) -> Subscription | None:
+    sub = await get_subscription(session, user_id=user_id, subscription_id=catalog_id)
+    if not sub:
+        return None
+    await session.execute(update(Subscription).where(Subscription.user_id == user_id).values(is_selected=False))
+    await session.execute(
+        update(Subscription).where(Subscription.id == catalog_id).where(Subscription.user_id == user_id).values(is_selected=True)
+    )
+    await session.flush()
+    return await get_subscription(session, user_id=user_id, subscription_id=catalog_id)
 

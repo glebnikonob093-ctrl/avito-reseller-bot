@@ -18,6 +18,7 @@ from app.handlers import register_handlers
 from app.monitor import run_monitor_once
 from app.migrations import create_all
 from app.sources.avito_public_web import AvitoPublicWebSource
+from app.sources.mock_listings import MockListingsSource
 from app.sources.registry import SourceRegistry
 
 
@@ -48,6 +49,7 @@ async def _post_init(app: Application) -> None:
                 max_requests_per_minute=settings.max_requests_per_minute,
                 proxy_url=settings.source_proxy_url,
             ),
+            MockListingsSource(),
         ]
     )
 

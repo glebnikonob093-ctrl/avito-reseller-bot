@@ -18,7 +18,9 @@ log = structlog.get_logger()
 
 def _format_listing(item: Listing) -> str:
     price = f"{item.price} ₽" if item.price is not None else "—"
-    return f"{item.title}\n{price}\n{item.url}"
+    city = item.city or "—"
+    tag = " [mock]" if item.is_mock else ""
+    return f"🆕{tag} {item.title}\nГород: {city}\nЦена: {price}\n{item.url}"
 
 
 async def run_monitor_once(app: Application) -> None:
@@ -35,12 +37,7 @@ async def run_monitor_once(app: Application) -> None:
 
     for user, sub in pairs:
         try:
-            src = sources.get(sub.source)
-        except Exception:
-            continue
-
-        try:
-            items = await src.fetch_latest(sub, limit=settings.max_new_items_per_run)
+            items = await sources.fetch_latest(sub, limit=settings.max_new_items_per_run)
         except Exception as e:
             log.warning("monitor_fetch_failed", sub_id=sub.id, err=str(e))
             continue
@@ -61,6 +58,11 @@ async def run_monitor_once(app: Application) -> None:
                     url=it.url,
                     title=it.title,
                     price=it.price,
+                    city=it.city,
+                    photo_url=it.photo_url,
+                    description=it.description,
+                    seller_profile_url=it.seller_profile_url,
+                    is_mock=it.is_mock,
                 )
                 if is_new:
                     new_items.append(it)

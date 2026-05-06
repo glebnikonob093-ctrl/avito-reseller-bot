@@ -38,8 +38,10 @@ class Subscription(Base):
     query: Mapped[str] = mapped_column(String(200), default="")
     price_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     price_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    display_name: Mapped[str] = mapped_column(String(120), default="")
 
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_selected: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user: Mapped["User"] = relationship(back_populates="subscriptions")
@@ -57,6 +59,11 @@ class SeenItem(Base):
     url: Mapped[str] = mapped_column(String(500))
     title: Mapped[str | None] = mapped_column(String(300), nullable=True)
     price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    photo_url: Mapped[str | None] = mapped_column(String(800), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(800), nullable=True)
+    seller_profile_url: Mapped[str | None] = mapped_column(String(800), nullable=True)
+    is_mock: Mapped[bool] = mapped_column(Boolean, default=False)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (

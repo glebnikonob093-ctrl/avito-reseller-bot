@@ -13,6 +13,11 @@ class Listing:
     title: str
     price: int | None
     published_at: datetime | None = None
+    city: str | None = None
+    photo_url: str | None = None
+    description: str | None = None
+    seller_profile_url: str | None = None
+    is_mock: bool = False
 
 
 class ListingsSource:
