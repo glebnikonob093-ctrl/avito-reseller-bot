@@ -322,36 +322,32 @@ def create_api_app(
                         "format": "jsonv2",
                         "countrycodes": "ru",
                         "q": query,
-                        "limit": max(limit * 2, 30),
+                        "limit": max(limit * 3, 60),
                         "addressdetails": 1,
                         "accept-language": "ru",
+                        "featuretype": "settlement",
                     },
                 )
                 r.raise_for_status()
                 rows = r.json()
             items: list[dict[str, str]] = []
             used: set[str] = set()
-            allowed_types = {
-                "city",
-                "town",
-                "village",
-                "hamlet",
-                "municipality",
-                "isolated_dwelling",
-                "suburb",
-                "quarter",
-                "allotments",
-            }
             for row in rows:
-                row_type = str(row.get("type") or "").lower()
-                row_class = str(row.get("class") or "").lower()
-                addresstype = str(row.get("addresstype") or "").lower()
-                if row_type not in allowed_types and addresstype not in allowed_types:
-                    continue
-                if row_class not in {"place", "boundary"}:
-                    continue
-                name = str(row.get("display_name") or "").split(",")[0].strip()
-                slug = str(row.get("name") or name).lower().replace(" ", "-")
+                address = row.get("address") or {}
+                if not isinstance(address, dict):
+                    address = {}
+                name = (
+                    str(address.get("city") or "")
+                    or str(address.get("town") or "")
+                    or str(address.get("village") or "")
+                    or str(address.get("hamlet") or "")
+                    or str(address.get("municipality") or "")
+                    or str(address.get("county") or "")
+                    or str(row.get("name") or "")
+                    or str(row.get("display_name") or "").split(",")[0].strip()
+                )
+                name = name.strip()
+                slug = str(row.get("name") or name).strip().lower().replace(" ", "-")
                 if not name or slug in used:
                     continue
                 used.add(slug)

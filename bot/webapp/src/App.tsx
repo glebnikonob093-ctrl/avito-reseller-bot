@@ -81,6 +81,7 @@ export function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [cities, setCities] = useState<City[]>([]);
   const [citiesLoading, setCitiesLoading] = useState(false);
+  const [citiesError, setCitiesError] = useState("");
   const [citySearchOpen, setCitySearchOpen] = useState(false);
   const [newCatalogName, setNewCatalogName] = useState("");
   const [newCatalogCategory, setNewCatalogCategory] = useState("");
@@ -175,6 +176,7 @@ export function App() {
 
   async function loadCities(query: string) {
     const normalized = query.trim();
+    setCitiesError("");
     if (normalized.length < 2) {
       setCities([]);
       return;
@@ -187,6 +189,7 @@ export function App() {
       setCities(rows);
     } catch {
       setCities([]);
+      setCitiesError("Сервис поиска населённых пунктов недоступен");
     } finally {
       setCitiesLoading(false);
     }
@@ -413,6 +416,7 @@ export function App() {
                 {!citiesLoading && newCatalogRegion.trim().length < 2 ? (
                   <div className="cityEmpty">Введите минимум 2 символа</div>
                 ) : null}
+                {!citiesLoading && citiesError ? <div className="cityEmpty">{citiesError}</div> : null}
                 {!citiesLoading && newCatalogRegion.trim().length >= 2 && !cities.length ? (
                   <div className="cityEmpty">Населённый пункт не найден</div>
                 ) : null}
