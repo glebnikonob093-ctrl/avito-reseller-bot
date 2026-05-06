@@ -17,6 +17,7 @@ class User(Base):
     tg_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
     role: Mapped[str] = mapped_column(String(20), default="user")
+    subscription_tier: Mapped[str] = mapped_column(String(20), default="free")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     subscriptions: Mapped[list["Subscription"]] = relationship(

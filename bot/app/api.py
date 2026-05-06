@@ -80,6 +80,14 @@ def _utc_now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
+def _resolve_account_status(*, role: str, subscription_tier: str) -> str:
+    if role == "admin":
+        return "Admin"
+    if subscription_tier == "pro":
+        return "Pro"
+    return "Free"
+
+
 def _parse_init_data(init_data: str) -> dict[str, str]:
     # initData is querystring-like: "query_id=...&user=...&auth_date=...&hash=..."
     return {k: v for k, v in parse_qsl(init_data, keep_blank_values=True)}
@@ -241,6 +249,11 @@ def create_api_app(
             "first_name": user.first_name,
             "username": user.username,
             "role": db_user.role or "user",
+            "subscription_tier": db_user.subscription_tier or "free",
+            "account_status": _resolve_account_status(
+                role=(db_user.role or "user"),
+                subscription_tier=(db_user.subscription_tier or "free"),
+            ),
             "is_admin": (db_user.role or "user") == "admin",
         }
 

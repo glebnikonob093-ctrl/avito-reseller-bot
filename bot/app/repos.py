@@ -15,6 +15,8 @@ async def upsert_user(session: AsyncSession, tg_user_id: int, chat_id: int) -> U
     if user:
         if user.chat_id != chat_id:
             user.chat_id = chat_id
+        if not user.subscription_tier:
+            user.subscription_tier = "free"
         return user
     user = User(tg_user_id=tg_user_id, chat_id=chat_id)
     session.add(user)

@@ -17,6 +17,7 @@ from app.config import Settings
 from app.repos import (
     create_subscription,
     delete_subscription,
+    get_user_by_tg_user_id,
     get_subscription,
     list_subscriptions,
     select_catalog,
@@ -52,7 +53,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-async def _render_profile_text(update: Update) -> str:
+def _resolve_account_status(*, role: str, subscription_tier: str) -> str:
+    if role == "admin":
+        return "Admin"
+    if subscription_tier == "pro":
+        return "Pro"
+    return "Free"
+
+
+async def _render_profile_text(update: Update, *, role: str, subscription_tier: str) -> str:
     user = update.effective_user
     if not user:
         return "Не удалось получить данные профиля."
@@ -62,15 +71,24 @@ async def _render_profile_text(update: Update) -> str:
         "👤 Мой профиль\n\n"
         f"Имя: `{first_name}`\n"
         f"Username: `{username}`\n"
-        f"Telegram ID: `{user.id}`"
+        f"Telegram ID: `{user.id}`\n"
+        f"Статус: `{_resolve_account_status(role=role, subscription_tier=subscription_tier)}`"
     )
 
 
 async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _, settings, _ = _deps(context)
-    if not update.message:
+    session_factory, settings, _ = _deps(context)
+    if not update.message or not update.effective_user or not update.effective_chat:
         return
-    text = await _render_profile_text(update)
+    async with session_factory() as session:
+        db_user = await upsert_user(session, tg_user_id=update.effective_user.id, chat_id=update.effective_chat.id)
+        db_user = (await get_user_by_tg_user_id(session, tg_user_id=update.effective_user.id)) or db_user
+        await session.commit()
+    text = await _render_profile_text(
+        update,
+        role=(db_user.role or "user"),
+        subscription_tier=(db_user.subscription_tier or "free"),
+    )
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
@@ -79,10 +97,23 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cb_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _, settings, _ = _deps(context)
-    if not update.callback_query or not update.callback_query.message:
+    session_factory, settings, _ = _deps(context)
+    if (
+        not update.callback_query
+        or not update.callback_query.message
+        or not update.effective_user
+        or not update.effective_chat
+    ):
         return
-    text = await _render_profile_text(update)
+    async with session_factory() as session:
+        db_user = await upsert_user(session, tg_user_id=update.effective_user.id, chat_id=update.effective_chat.id)
+        db_user = (await get_user_by_tg_user_id(session, tg_user_id=update.effective_user.id)) or db_user
+        await session.commit()
+    text = await _render_profile_text(
+        update,
+        role=(db_user.role or "user"),
+        subscription_tier=(db_user.subscription_tier or "free"),
+    )
     await update.callback_query.message.edit_text(
         text,
         parse_mode=ParseMode.MARKDOWN,

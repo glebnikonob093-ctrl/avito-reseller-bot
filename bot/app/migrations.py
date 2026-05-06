@@ -45,6 +45,9 @@ async def create_all(engine: AsyncEngine) -> None:
             if "role" not in user_existing:
                 await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'")
                 await conn.exec_driver_sql("UPDATE users SET role = 'user' WHERE role IS NULL")
+            if "subscription_tier" not in user_existing:
+                await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN subscription_tier VARCHAR(20) DEFAULT 'free'")
+                await conn.exec_driver_sql("UPDATE users SET subscription_tier = 'free' WHERE subscription_tier IS NULL")
 
             await conn.exec_driver_sql(
                 """

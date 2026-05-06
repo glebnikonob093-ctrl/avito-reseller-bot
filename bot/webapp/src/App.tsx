@@ -45,6 +45,8 @@ type UserProfile = {
   first_name: string;
   username: string;
   role: "user" | "admin";
+  subscription_tier: "free" | "pro";
+  account_status: "Free" | "Pro" | "Admin";
   is_admin: boolean;
 };
 
@@ -595,6 +597,10 @@ export function App() {
             <div className="profileRow">
               <span className="meta">Роль</span>
               <strong>{profile.is_admin ? "Администратор" : "Пользователь"}</strong>
+            </div>
+            <div className="profileRow">
+              <span className="meta">Статус</span>
+              <strong>{profile.account_status || "Free"}</strong>
             </div>
           </div>
         ) : (
