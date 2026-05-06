@@ -3,12 +3,23 @@ from __future__ import annotations
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 
-def main_menu_kb(*, webapp_url: str = "") -> InlineKeyboardMarkup:
+def main_menu_kb(*, webapp_url: str = "", is_admin: bool = False) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if webapp_url:
         rows.append([InlineKeyboardButton(text="🧾 Открыть Mini App", web_app=WebAppInfo(url=webapp_url))])
     rows.append([InlineKeyboardButton(text="👤 Мой профиль", callback_data="profile:show")])
+    if is_admin:
+        rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin:home")])
     return InlineKeyboardMarkup(rows)
+
+
+def admin_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="nav:home")],
+        ]
+    )
 
 
 def subs_list_kb(sub_ids: list[int]) -> InlineKeyboardMarkup:

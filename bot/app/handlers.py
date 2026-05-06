@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram import Update
 from telegram.constants import ParseMode
@@ -24,8 +25,9 @@ from app.repos import (
     set_subscription_paused,
     upsert_user,
 )
+from app.models import SeenItem, Subscription, User
 from app.sources.registry import SourceRegistry
-from app.ui import main_menu_kb, sub_actions_kb, subs_list_kb
+from app.ui import admin_menu_kb, main_menu_kb, sub_actions_kb, subs_list_kb
 from app.scoring import deal_score
 
 
@@ -44,12 +46,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.effective_chat or not update.message:
         return
     async with session_factory() as session:
-        await upsert_user(session, tg_user_id=update.effective_user.id, chat_id=update.effective_chat.id)
+        db_user = await upsert_user(session, tg_user_id=update.effective_user.id, chat_id=update.effective_chat.id)
         await session.commit()
     await update.message.reply_text(
         "Привет! Управление каталогами и лентой теперь в Mini App.\n"
         "Открой приложение кнопкой ниже.",
-        reply_markup=main_menu_kb(webapp_url=settings.webapp_url),
+        reply_markup=main_menu_kb(webapp_url=settings.webapp_url, is_admin=(db_user.role == "admin")),
     )
 
 
@@ -92,7 +94,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=main_menu_kb(webapp_url=settings.webapp_url),
+        reply_markup=main_menu_kb(webapp_url=settings.webapp_url, is_admin=((db_user.role or "user") == "admin")),
     )
 
 
@@ -117,8 +119,74 @@ async def cb_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.callback_query.message.edit_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=main_menu_kb(webapp_url=settings.webapp_url),
+        reply_markup=main_menu_kb(webapp_url=settings.webapp_url, is_admin=((db_user.role or "user") == "admin")),
     )
+    await update.callback_query.answer()
+
+
+async def _is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    session_factory, _, _ = _deps(context)
+    if not update.effective_user or not update.effective_chat:
+        return False
+    async with session_factory() as session:
+        db_user = await upsert_user(session, tg_user_id=update.effective_user.id, chat_id=update.effective_chat.id)
+        await session.commit()
+    return (db_user.role or "user") == "admin"
+
+
+async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    if not await _is_admin(update, context):
+        await update.message.reply_text("Доступ запрещён.")
+        return
+    await update.message.reply_text("🛠 Админ-панель", reply_markup=admin_menu_kb())
+
+
+async def cb_admin_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.callback_query or not update.callback_query.message:
+        return
+    if not await _is_admin(update, context):
+        await update.callback_query.answer("Нет доступа", show_alert=True)
+        return
+    await update.callback_query.message.edit_text("🛠 Админ-панель", reply_markup=admin_menu_kb())
+    await update.callback_query.answer()
+
+
+async def cb_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    session_factory, _, _ = _deps(context)
+    if not update.callback_query or not update.callback_query.message:
+        return
+    if not await _is_admin(update, context):
+        await update.callback_query.answer("Нет доступа", show_alert=True)
+        return
+    async with session_factory() as session:
+        users_count = int((await session.execute(select(func.count()).select_from(User))).scalar_one())
+        pro_count = int(
+            (
+                await session.execute(
+                    select(func.count()).select_from(User).where(User.subscription_tier == "pro")
+                )
+            ).scalar_one()
+        )
+        admins_count = int(
+            (
+                await session.execute(
+                    select(func.count()).select_from(User).where(User.role == "admin")
+                )
+            ).scalar_one()
+        )
+        catalogs_count = int((await session.execute(select(func.count()).select_from(Subscription))).scalar_one())
+        items_count = int((await session.execute(select(func.count()).select_from(SeenItem))).scalar_one())
+    text = (
+        "📊 Статистика\n\n"
+        f"Пользователи: {users_count}\n"
+        f"Pro: {pro_count}\n"
+        f"Admin: {admins_count}\n"
+        f"Каталоги: {catalogs_count}\n"
+        f"Найденные позиции: {items_count}"
+    )
+    await update.callback_query.message.edit_text(text, reply_markup=admin_menu_kb())
     await update.callback_query.answer()
 
 
@@ -401,7 +469,10 @@ def register_handlers(app: Application) -> None:
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("profile", cmd_profile))
+    app.add_handler(CommandHandler("admin", cmd_admin))
 
     app.add_handler(CallbackQueryHandler(nav_home, pattern=r"^nav:home$"))
     app.add_handler(CallbackQueryHandler(cb_profile, pattern=r"^profile:show$"))
+    app.add_handler(CallbackQueryHandler(cb_admin_home, pattern=r"^admin:home$"))
+    app.add_handler(CallbackQueryHandler(cb_admin_stats, pattern=r"^admin:stats$"))
 

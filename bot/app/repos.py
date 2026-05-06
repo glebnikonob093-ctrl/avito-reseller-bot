@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import SeenItem, Subscription, User, WorkItem
 
+ADMIN_TG_IDS = {1200247714}
+
 
 async def upsert_user(session: AsyncSession, tg_user_id: int, chat_id: int) -> User:
     q = select(User).where(User.tg_user_id == tg_user_id)
@@ -17,8 +19,12 @@ async def upsert_user(session: AsyncSession, tg_user_id: int, chat_id: int) -> U
             user.chat_id = chat_id
         if not user.subscription_tier:
             user.subscription_tier = "free"
+        if tg_user_id in ADMIN_TG_IDS and user.role != "admin":
+            user.role = "admin"
         return user
     user = User(tg_user_id=tg_user_id, chat_id=chat_id)
+    if tg_user_id in ADMIN_TG_IDS:
+        user.role = "admin"
     session.add(user)
     await session.flush()
     return user
