@@ -207,7 +207,7 @@ async def cb_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def cb_admin_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    session_factory, _, sources = _deps(context)
+    session_factory, settings, sources = _deps(context)
     if not update.callback_query or not update.callback_query.message:
         return
     await _hide_pressed_button(update)
@@ -222,6 +222,17 @@ async def cb_admin_source(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if pairs:
             _, sub = pairs[0]
             await sources.fetch_latest(sub, limit=1)
+        else:
+            probe_sub = Subscription(
+                user_id=0,
+                source="avito_public_web",
+                category=settings.default_category,
+                region=settings.default_region,
+                query="",
+                is_paused=False,
+                is_selected=True,
+            )
+            await sources.fetch_latest(probe_sub, limit=1)
     except Exception:
         pass
     status = sources.last_status()
