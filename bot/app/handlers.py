@@ -205,6 +205,26 @@ async def cb_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.callback_query.answer()
 
 
+async def cb_admin_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _, _, sources = _deps(context)
+    if not update.callback_query or not update.callback_query.message:
+        return
+    await _hide_pressed_button(update)
+    if not await _is_admin(update, context):
+        await update.callback_query.answer("Нет доступа", show_alert=True)
+        return
+    status = sources.last_status()
+    text = (
+        "🧪 Статус источника\n\n"
+        f"Время (UTC): {status.get('time') or '-'}\n"
+        f"Источник: {status.get('source') or '-'}\n"
+        f"Результат: {status.get('reason') or '-'}\n"
+        f"Карточек: {status.get('items') or '0'}"
+    )
+    await update.callback_query.message.edit_text(text, reply_markup=admin_menu_kb())
+    await update.callback_query.answer()
+
+
 async def show_subs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session_factory, settings, _ = _deps(context)
     chat = update.effective_chat
@@ -508,4 +528,5 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(cb_profile, pattern=r"^profile:show$"))
     app.add_handler(CallbackQueryHandler(cb_admin_home, pattern=r"^admin:home$"))
     app.add_handler(CallbackQueryHandler(cb_admin_stats, pattern=r"^admin:stats$"))
+    app.add_handler(CallbackQueryHandler(cb_admin_source, pattern=r"^admin:source$"))
 

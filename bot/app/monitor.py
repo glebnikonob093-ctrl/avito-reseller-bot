@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram.ext import Application
 
 from app.config import Settings
-from app.repos import get_active_subscriptions, mark_seen
+from app.repos import ADMIN_TG_IDS, get_active_subscriptions, mark_seen
 from app.scoring import deal_score
 from app.sources.base import Listing
 from app.sources.registry import SourceRegistry
@@ -48,6 +48,9 @@ async def run_monitor_once(app: Application) -> None:
     if not pairs:
         return
 
+    empty_cycles: dict[int, int] = app.bot_data.setdefault("empty_cycles", {})
+    alert_threshold = 4
+
     for user, sub in pairs:
         try:
             items = await sources.fetch_latest(sub, limit=settings.max_new_items_per_run)
@@ -82,7 +85,25 @@ async def run_monitor_once(app: Application) -> None:
             await session.commit()
 
         if not new_items:
+            prev = empty_cycles.get(sub.id, 0)
+            empty_cycles[sub.id] = prev + 1
+            if empty_cycles[sub.id] == alert_threshold:
+                status = sources.last_status()
+                for admin_id in ADMIN_TG_IDS:
+                    try:
+                        await app.bot.send_message(
+                            chat_id=admin_id,
+                            text=(
+                                "⚠️ Источник выдаёт пусто несколько циклов подряд.\n"
+                                f"Каталог: #{sub.id}\n"
+                                f"Источник: {status.get('source', '-')} | reason={status.get('reason', '-')}\n"
+                                f"Пустых циклов: {empty_cycles[sub.id]}"
+                            ),
+                        )
+                    except Exception:
+                        pass
             continue
+        empty_cycles[sub.id] = 0
 
         # Send oldest-first to reduce “spam feel”
         for it in reversed(new_items):

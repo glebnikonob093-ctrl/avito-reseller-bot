@@ -17,6 +17,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats")],
+            [InlineKeyboardButton(text="🧪 Статус источника", callback_data="admin:source")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="nav:home")],
         ]
     )

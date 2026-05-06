@@ -18,6 +18,7 @@ from app.db import create_engine, create_session_factory, ping_db
 from app.handlers import register_handlers
 from app.monitor import run_monitor_once
 from app.migrations import create_all
+from app.sources.avito_cloud_scrape import AvitoCloudScrapeSource
 from app.sources.avito_public_web import AvitoPublicWebSource
 from app.sources.mock_listings import MockListingsSource
 from app.sources.registry import SourceRegistry
@@ -56,6 +57,10 @@ async def _post_init(app: Application) -> None:
     session_factory = create_session_factory(engine)
     sources = SourceRegistry(
         [
+            AvitoCloudScrapeSource(
+                provider=settings.scraper_provider,
+                api_key=settings.scraper_api_key,
+            ),
             AvitoPublicWebSource(
                 max_requests_per_minute=settings.max_requests_per_minute,
                 proxy_url=settings.source_proxy_url,
@@ -132,12 +137,13 @@ async def _post_shutdown(app: Application) -> None:
     engine = app.bot_data.get("engine")
     sources: SourceRegistry | None = app.bot_data.get("sources")
     if sources:
-        try:
-            src = sources.get("avito_public_web")
-            if hasattr(src, "aclose"):
-                await src.aclose()  # type: ignore[func-returns-value]
-        except Exception:
-            pass
+        for key in ("avito_cloud_scrape", "avito_public_web"):
+            try:
+                src = sources.get(key)
+                if hasattr(src, "aclose"):
+                    await src.aclose()  # type: ignore[func-returns-value]
+            except Exception:
+                pass
     if engine:
         await engine.dispose()
 
