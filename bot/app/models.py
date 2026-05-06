@@ -71,3 +71,18 @@ class SeenItem(Base):
         UniqueConstraint("subscription_id", "source", "external_id", name="uq_seen_item"),
     )
 
+
+class WorkItem(Base):
+    __tablename__ = "work_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    source: Mapped[str] = mapped_column(String(50))
+    external_id: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(30), default="new")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "source", "external_id", name="uq_work_item_user_source_ext"),
+    )
+

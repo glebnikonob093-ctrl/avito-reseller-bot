@@ -13,6 +13,8 @@ type FeedItem = {
   description: string | null;
   seller_profile_url: string | null;
   is_mock: boolean;
+  deal_score: number;
+  work_status: "new" | "contacted" | "negotiating" | "bought" | "sold";
 };
 
 type Catalog = {
@@ -77,6 +79,10 @@ export function App() {
 
   const [tab, setTab] = useState<"feed" | "catalogs" | "notifications" | "profile">("feed");
   const [sortMode, setSortMode] = useState<"newest" | "best_deals">("newest");
+  const [minDealScore, setMinDealScore] = useState<number>(0);
+  const [maxPriceFilter, setMaxPriceFilter] = useState<string>("");
+  const [onlyWithPhoto, setOnlyWithPhoto] = useState(false);
+  const [workStatusFilter, setWorkStatusFilter] = useState<string>("");
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [cities, setCities] = useState<City[]>([]);
@@ -122,7 +128,15 @@ export function App() {
     try {
       const selected = catalogs.find((c) => c.is_selected);
       const selectedPart = selected ? `&catalog_id=${selected.id}` : "";
-      const body = await apiFetch(`/api/feed?limit=50&sort=${sortMode}${selectedPart}`);
+      const qs = new URLSearchParams();
+      qs.set("limit", "50");
+      qs.set("sort", sortMode);
+      if (selected) qs.set("catalog_id", String(selected.id));
+      if (minDealScore > 0) qs.set("min_deal_score", String(minDealScore));
+      if (maxPriceFilter.trim()) qs.set("max_price", maxPriceFilter.trim());
+      if (onlyWithPhoto) qs.set("only_with_photo", "true");
+      if (workStatusFilter) qs.set("work_status", workStatusFilter);
+      const body = await apiFetch(`/api/feed?${qs.toString()}`);
       setItems(Array.isArray(body?.items) ? body.items : []);
     } catch (e: any) {
       setError(e?.message ? String(e.message) : "Не удалось загрузить ленту");
@@ -250,6 +264,27 @@ export function App() {
     }
   }
 
+  async function updateWorkStatus(item: FeedItem, status: FeedItem["work_status"]) {
+    try {
+      await apiFetch("/api/work-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: item.source,
+          external_id: item.external_id,
+          status,
+        }),
+      });
+      setItems((prev) =>
+        prev.map((x) =>
+          x.source === item.source && x.external_id === item.external_id ? { ...x, work_status: status } : x,
+        ),
+      );
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : "Не удалось обновить статус");
+    }
+  }
+
   useEffect(() => {
     const onError = (e: ErrorEvent) => {
       setRuntimeError(e.message || "Runtime error");
@@ -282,7 +317,7 @@ export function App() {
   useEffect(() => {
     void loadFeed();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortMode, catalogs.find((c) => c.is_selected)?.id, catalogs.length]);
+  }, [sortMode, catalogs.find((c) => c.is_selected)?.id, catalogs.length, minDealScore, maxPriceFilter, onlyWithPhoto, workStatusFilter]);
 
   useEffect(() => {
     if (tab === "notifications") {
@@ -314,6 +349,38 @@ export function App() {
             Выгодные
           </button>
         </div>
+        <div className="sortRow" style={{ marginTop: 8, flexWrap: "wrap" }}>
+          <label className="meta">Deal score от</label>
+          <input
+            className="input"
+            style={{ maxWidth: 90 }}
+            type="number"
+            min={0}
+            max={100}
+            value={minDealScore}
+            onChange={(e) => setMinDealScore(Math.max(0, Math.min(100, Number(e.target.value || 0))))}
+          />
+          <input
+            className="input"
+            style={{ maxWidth: 150 }}
+            type="number"
+            min={0}
+            placeholder="Цена до"
+            value={maxPriceFilter}
+            onChange={(e) => setMaxPriceFilter(e.target.value)}
+          />
+          <label className="meta">
+            <input type="checkbox" checked={onlyWithPhoto} onChange={(e) => setOnlyWithPhoto(e.target.checked)} /> Только с фото
+          </label>
+          <select className="input" style={{ maxWidth: 170 }} value={workStatusFilter} onChange={(e) => setWorkStatusFilter(e.target.value)}>
+            <option value="">Все статусы</option>
+            <option value="new">Новые</option>
+            <option value="contacted">Написал</option>
+            <option value="negotiating">Торг</option>
+            <option value="bought">Купил</option>
+            <option value="sold">Продал</option>
+          </select>
+        </div>
 
         {!items.length && !loading && !error ? (
           <div className="emptyState">
@@ -340,6 +407,7 @@ export function App() {
                 <div className="price">{formatPrice(it.price)}</div>
                 <div className="meta">{formatTime(it.first_seen_at)}</div>
               </div>
+              <div className="meta">Deal score: {Math.round(it.deal_score || 0)}</div>
               <div className="meta">{it.city || "Город не указан"}</div>
               {it.description ? <div className="desc">{it.description}</div> : null}
               <div className="linkWrap">
@@ -359,6 +427,19 @@ export function App() {
                   </>
                 ) : null}
                 {it.is_mock ? " · тестовые данные" : ""}
+              </div>
+              <div className="catalogActions">
+                <select
+                  className="input"
+                  value={it.work_status || "new"}
+                  onChange={(e) => void updateWorkStatus(it, e.target.value as FeedItem["work_status"])}
+                >
+                  <option value="new">Новый</option>
+                  <option value="contacted">Написал</option>
+                  <option value="negotiating">Торг</option>
+                  <option value="bought">Купил</option>
+                  <option value="sold">Продал</option>
+                </select>
               </div>
             </div>
           ))}

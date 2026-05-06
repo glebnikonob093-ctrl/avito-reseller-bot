@@ -46,3 +46,18 @@ async def create_all(engine: AsyncEngine) -> None:
                 await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'")
                 await conn.exec_driver_sql("UPDATE users SET role = 'user' WHERE role IS NULL")
 
+            await conn.exec_driver_sql(
+                """
+                CREATE TABLE IF NOT EXISTS work_items (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    source VARCHAR(50) NOT NULL,
+                    external_id VARCHAR(200) NOT NULL,
+                    status VARCHAR(30) DEFAULT 'new',
+                    updated_at DATETIME,
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    CONSTRAINT uq_work_item_user_source_ext UNIQUE (user_id, source, external_id)
+                )
+                """
+            )
+

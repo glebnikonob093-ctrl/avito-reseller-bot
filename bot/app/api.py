@@ -21,6 +21,7 @@ from app.repos import (
     get_user_by_tg_user_id,
     list_catalogs,
     list_feed_items_for_catalog,
+    set_work_item_status,
     select_catalog,
     upsert_user,
     update_catalog,
@@ -52,6 +53,12 @@ class CatalogUpdate(BaseModel):
     price_min: int | None = None
     price_max: int | None = None
     is_paused: bool | None = None
+
+
+class WorkStatusUpdate(BaseModel):
+    source: str
+    external_id: str
+    status: str = Field(pattern="^(new|contacted|negotiating|bought|sold)$")
 
 
 def _catalog_to_dict(sub: Any) -> dict[str, Any]:
@@ -162,6 +169,10 @@ def create_api_app(
         limit: int = 50,
         catalog_id: int | None = None,
         sort: str = "newest",
+        min_deal_score: float | None = Query(default=None, ge=0, le=100),
+        max_price: int | None = Query(default=None, ge=0),
+        only_with_photo: bool = False,
+        work_status: str | None = Query(default=None),
         user: TgWebAppUser = Depends(get_current_user),
     ) -> dict[str, Any]:
         safe_limit = max(1, min(200, int(limit)))
@@ -176,9 +187,29 @@ def create_api_app(
                 catalog_id=catalog_id,
                 sort_by=sort_by,
                 limit=safe_limit,
+                min_deal_score=min_deal_score,
+                max_price=max_price,
+                only_with_photo=only_with_photo,
+                work_status=work_status,
             )
             await session.commit()
         return {"items": items, "sort": sort_by}
+
+    @app.post("/api/work-status")
+    async def update_work_status(payload: WorkStatusUpdate, user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:
+        async with session_factory() as session:
+            db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
+            if not db_user:
+                db_user = await upsert_user(session, tg_user_id=user.tg_user_id, chat_id=user.tg_user_id)
+            item = await set_work_item_status(
+                session,
+                user_id=db_user.id,
+                source=payload.source,
+                external_id=payload.external_id,
+                status=payload.status,
+            )
+            await session.commit()
+        return {"item": item}
 
     @app.get("/api/notifications")
     async def notifications(limit: int = 20, user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:

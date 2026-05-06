@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from sqlalchemy.exc import IntegrityError
+from datetime import datetime
+
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import SeenItem, Subscription, User
+from app.models import SeenItem, Subscription, User, WorkItem
 
 
 async def upsert_user(session: AsyncSession, tg_user_id: int, chat_id: int) -> User:
@@ -145,6 +147,8 @@ async def list_feed_items(session: AsyncSession, *, user_id: int, limit: int) ->
                 "description": it.description,
                 "seller_profile_url": it.seller_profile_url,
                 "is_mock": bool(it.is_mock),
+                "deal_score": 0,
+                "work_status": "new",
             }
         )
     return out
@@ -167,7 +171,7 @@ def _deal_score_for_seen(item: SeenItem, catalog: Subscription) -> float:
             score += 30
     if item.is_mock:
         score -= 2
-    return score
+    return max(0.0, min(100.0, round(score, 2)))
 
 
 async def list_feed_items_for_catalog(
@@ -177,6 +181,10 @@ async def list_feed_items_for_catalog(
     catalog_id: int | None,
     sort_by: str,
     limit: int,
+    min_deal_score: float | None = None,
+    max_price: int | None = None,
+    only_with_photo: bool = False,
+    work_status: str | None = None,
 ) -> list[dict]:
     sub_q = select(Subscription).where(Subscription.user_id == user_id)
     if catalog_id is not None:
@@ -190,9 +198,32 @@ async def list_feed_items_for_catalog(
     catalog_ids = [c.id for c in catalogs]
     q = select(SeenItem).where(SeenItem.user_id == user_id).where(SeenItem.subscription_id.in_(catalog_ids))
     rows = list((await session.execute(q)).scalars().all())
+    catalogs_by_id = {c.id: c for c in catalogs}
+    raw_scores: dict[tuple[str, str], float] = {}
+    for it in rows:
+        raw_scores[(it.source, it.external_id)] = _deal_score_for_seen(it, catalogs_by_id[it.subscription_id])
+
+    work_q = select(WorkItem).where(WorkItem.user_id == user_id)
+    work_rows = list((await session.execute(work_q)).scalars().all())
+    work_status_map = {(w.source, w.external_id): w.status for w in work_rows}
+
+    filtered: list[SeenItem] = []
+    for it in rows:
+        key = (it.source, it.external_id)
+        score = raw_scores[key]
+        if min_deal_score is not None and score < float(min_deal_score):
+            continue
+        if max_price is not None and it.price is not None and it.price > int(max_price):
+            continue
+        if only_with_photo and not it.photo_url:
+            continue
+        if work_status and work_status_map.get(key, "new") != work_status:
+            continue
+        filtered.append(it)
+
+    rows = filtered
     if sort_by == "best_deals":
-        catalogs_by_id = {c.id: c for c in catalogs}
-        rows.sort(key=lambda it: _deal_score_for_seen(it, catalogs_by_id[it.subscription_id]), reverse=True)
+        rows.sort(key=lambda it: raw_scores[(it.source, it.external_id)], reverse=True)
     else:
         rows.sort(key=lambda it: it.first_seen_at, reverse=True)
     rows = rows[:limit]
@@ -213,9 +244,38 @@ async def list_feed_items_for_catalog(
                 "description": it.description,
                 "seller_profile_url": it.seller_profile_url,
                 "is_mock": bool(it.is_mock),
+                "deal_score": raw_scores[(it.source, it.external_id)],
+                "work_status": work_status_map.get((it.source, it.external_id), "new"),
             }
         )
     return out
+
+
+async def set_work_item_status(
+    session: AsyncSession, *, user_id: int, source: str, external_id: str, status: str
+) -> dict:
+    q = (
+        select(WorkItem)
+        .where(WorkItem.user_id == user_id)
+        .where(WorkItem.source == source)
+        .where(WorkItem.external_id == external_id)
+    )
+    existing = (await session.execute(q)).scalar_one_or_none()
+    if existing:
+        existing.status = status
+        existing.updated_at = datetime.utcnow()
+        await session.flush()
+        return {"source": existing.source, "external_id": existing.external_id, "status": existing.status}
+    obj = WorkItem(
+        user_id=user_id,
+        source=source,
+        external_id=external_id,
+        status=status,
+        updated_at=datetime.utcnow(),
+    )
+    session.add(obj)
+    await session.flush()
+    return {"source": obj.source, "external_id": obj.external_id, "status": obj.status}
 
 
 async def get_active_subscriptions(session: AsyncSession) -> list[tuple[User, Subscription]]:
