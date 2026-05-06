@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from urllib.parse import urlencode
 
@@ -41,6 +42,17 @@ class AvitoPublicWebSource(ListingsSource):
         # https://www.avito.ru/{region}/{category}?q=...&pmin=...&pmax=...&s=104 (sort by date)
         base = f"https://www.avito.ru/{sub.region}/{sub.category}"
         params: dict[str, str] = {"s": "104"}  # 104: by date (newest)
+        if sub.query:
+            params["q"] = sub.query
+        if sub.price_min is not None:
+            params["pmin"] = str(sub.price_min)
+        if sub.price_max is not None:
+            params["pmax"] = str(sub.price_max)
+        return f"{base}?{urlencode(params)}"
+
+    def _build_mobile_url(self, sub: Subscription) -> str:
+        base = f"https://m.avito.ru/{sub.region}/{sub.category}"
+        params: dict[str, str] = {"s": "104"}
         if sub.query:
             params["q"] = sub.query
         if sub.price_min is not None:
@@ -105,8 +117,77 @@ class AvitoPublicWebSource(ListingsSource):
                 break
         return out
 
+    def _extract_from_jsonld(self, html: str, limit: int) -> list[Listing]:
+        out: list[Listing] = []
+        seen_urls: set[str] = set()
+        scripts = re.findall(
+            r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
+            html,
+            flags=re.S,
+        )
+        for raw in scripts:
+            text = raw.strip()
+            if not text:
+                continue
+            try:
+                obj = json.loads(text)
+            except Exception:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            entries = obj.get("itemListElement")
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                item = entry.get("item")
+                if isinstance(item, dict):
+                    url = str(item.get("url") or "").strip()
+                    title = str(item.get("name") or "").strip()
+                    offers = item.get("offers")
+                else:
+                    url = str(entry.get("url") or "").strip()
+                    title = str(entry.get("name") or "").strip()
+                    offers = entry.get("offers")
+                if not url:
+                    continue
+                if not url.startswith("http"):
+                    if url.startswith("/"):
+                        url = "https://www.avito.ru" + url
+                    else:
+                        url = "https://www.avito.ru/" + url
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                price = None
+                if isinstance(offers, dict):
+                    raw_price = offers.get("price")
+                    if raw_price is not None:
+                        try:
+                            price = int(float(str(raw_price)))
+                        except Exception:
+                            price = None
+                m = re.search(r"/(\d+)(?:\?|$)", url)
+                external_id = m.group(1) if m else url
+                if not title:
+                    title = "Без названия"
+                out.append(Listing(external_id=external_id, url=url, title=title, price=price))
+                if len(out) >= limit:
+                    return out
+        return out
+
     async def fetch_latest(self, sub: Subscription, limit: int) -> list[Listing]:
+        mobile_url = self._build_mobile_url(sub)
+        html_mobile = await self._get_html(mobile_url)
+        mobile_items = self._extract_from_jsonld(html_mobile, limit=limit)
+        if mobile_items:
+            return mobile_items
+
         url = self._build_url(sub)
         html = await self._get_html(url)
-        return self._extract_listings(html, limit=limit)
+        parsed = self._extract_listings(html, limit=limit)
+        if parsed:
+            return parsed
+        return self._extract_from_jsonld(html, limit=limit)
 
