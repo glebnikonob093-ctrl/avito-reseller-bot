@@ -42,7 +42,13 @@ def _verify_init_data(*, init_data: str, bot_token: str) -> dict[str, Any]:
         check_pairs.append(f"{k}={data[k]}")
     data_check_string = "\n".join(check_pairs)
 
-    secret_key = hashlib.sha256(bot_token.encode("utf-8")).digest()
+    # Telegram WebApp signature:
+    # secret_key = HMAC_SHA256(key="WebAppData", msg=bot_token)
+    secret_key = hmac.new(
+        b"WebAppData",
+        bot_token.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
     calculated_hash = hmac.new(
         secret_key,
         data_check_string.encode("utf-8"),
