@@ -85,6 +85,8 @@ async def _post_init(app: Application) -> None:
         allowed_origins=allowed_origins,
         source_proxy_url=settings.source_proxy_url,
         max_requests_per_minute=settings.max_requests_per_minute,
+        scraper_provider=settings.scraper_provider,
+        scraper_api_key=settings.scraper_api_key,
     )
     config = uvicorn.Config(
         api_app,

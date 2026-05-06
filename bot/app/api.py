@@ -27,6 +27,7 @@ from app.repos import (
     update_catalog,
 )
 from app.sources.avito_public_web import AvitoPublicWebSource
+from app.sources.avito_cloud_scrape import AvitoCloudScrapeSource
 
 
 @dataclass(frozen=True)
@@ -146,12 +147,15 @@ def create_api_app(
     allowed_origins: list[str] | None = None,
     source_proxy_url: str = "",
     max_requests_per_minute: int = 20,
+    scraper_provider: str = "scraperapi",
+    scraper_api_key: str = "",
 ) -> FastAPI:
     app = FastAPI(title="AvitoResellerBot API", version="0.1")
     live_source = AvitoPublicWebSource(
         max_requests_per_minute=max_requests_per_minute,
         proxy_url=source_proxy_url,
     )
+    cloud_source = AvitoCloudScrapeSource(provider=scraper_provider, api_key=scraper_api_key)
 
     if allowed_origins:
         app.add_middleware(
@@ -232,11 +236,17 @@ def create_api_app(
         if selected is None:
             selected = next((c for c in catalogs_rows if bool(c.is_selected)), catalogs_rows[0])
 
-        try:
-            listings, debug = await live_source.fetch_latest_with_debug(selected, limit=safe_limit)
-        except Exception:
-            listings = []
-            debug = {"reason": "live_source_failed"}
+        listings: list[Any] = []
+        debug: dict[str, Any] = {}
+        if scraper_api_key:
+            listings, debug = await cloud_source.fetch_latest_with_debug(selected, limit=safe_limit)
+        if not listings:
+            try:
+                fallback_items, fallback_debug = await live_source.fetch_latest_with_debug(selected, limit=safe_limit)
+                listings = fallback_items
+                debug = {"primary": debug, "fallback": fallback_debug}
+            except Exception:
+                debug = {"primary": debug, "fallback": {"reason": "live_source_failed"}}
 
         items: list[dict[str, Any]] = []
         for it in listings:
@@ -462,6 +472,7 @@ def create_api_app(
     @app.on_event("shutdown")
     async def _close_live_source() -> None:
         await live_source.aclose()
+        await cloud_source.aclose()
 
     return app
 

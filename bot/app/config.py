@@ -28,6 +28,8 @@ class Settings:
     api_port: int
     telegram_proxy_url: str
     source_proxy_url: str
+    scraper_provider: str
+    scraper_api_key: str
 
 
 def load_settings() -> Settings:
@@ -47,5 +49,7 @@ def load_settings() -> Settings:
         api_port=_get_int("API_PORT", 8000),
         telegram_proxy_url=os.getenv("TELEGRAM_PROXY_URL", ""),
         source_proxy_url=os.getenv("SOURCE_PROXY_URL", ""),
+        scraper_provider=os.getenv("SCRAPER_PROVIDER", "scraperapi").strip().lower(),
+        scraper_api_key=os.getenv("SCRAPER_API_KEY", "").strip(),
     )
 
