@@ -191,3 +191,46 @@ class AvitoPublicWebSource(ListingsSource):
             return parsed
         return self._extract_from_jsonld(html, limit=limit)
 
+    async def fetch_latest_with_debug(self, sub: Subscription, limit: int) -> tuple[list[Listing], dict]:
+        debug: dict = {
+            "mobile_captcha": False,
+            "desktop_captcha": False,
+            "mobile_jsonld_items": 0,
+            "desktop_selector_items": 0,
+            "desktop_jsonld_items": 0,
+            "reason": "",
+        }
+        try:
+            mobile_url = self._build_mobile_url(sub)
+            html_mobile = await self._get_html(mobile_url)
+            debug["mobile_captcha"] = "captcha" in html_mobile.lower()
+            mobile_items = self._extract_from_jsonld(html_mobile, limit=limit)
+            debug["mobile_jsonld_items"] = len(mobile_items)
+            if mobile_items:
+                debug["reason"] = "ok_mobile_jsonld"
+                return mobile_items, debug
+        except Exception:
+            debug["reason"] = "mobile_request_failed"
+
+        try:
+            url = self._build_url(sub)
+            html = await self._get_html(url)
+            debug["desktop_captcha"] = "captcha" in html.lower()
+            parsed = self._extract_listings(html, limit=limit)
+            debug["desktop_selector_items"] = len(parsed)
+            if parsed:
+                debug["reason"] = "ok_desktop_selectors"
+                return parsed, debug
+            jsonld_items = self._extract_from_jsonld(html, limit=limit)
+            debug["desktop_jsonld_items"] = len(jsonld_items)
+            if jsonld_items:
+                debug["reason"] = "ok_desktop_jsonld"
+                return jsonld_items, debug
+        except Exception:
+            if not debug["reason"]:
+                debug["reason"] = "desktop_request_failed"
+
+        if not debug["reason"]:
+            debug["reason"] = "no_items_found"
+        return [], debug
+

@@ -233,9 +233,10 @@ def create_api_app(
             selected = next((c for c in catalogs_rows if bool(c.is_selected)), catalogs_rows[0])
 
         try:
-            listings = await live_source.fetch_latest(selected, limit=safe_limit)
+            listings, debug = await live_source.fetch_latest_with_debug(selected, limit=safe_limit)
         except Exception:
             listings = []
+            debug = {"reason": "live_source_failed"}
 
         items: list[dict[str, Any]] = []
         for it in listings:
@@ -257,7 +258,7 @@ def create_api_app(
                     "work_status": "new",
                 }
             )
-        return {"items": items, "source": "avito_public_web", "live": True}
+        return {"items": items, "source": "avito_public_web", "live": True, "debug": debug}
 
     @app.post("/api/work-status")
     async def update_work_status(payload: WorkStatusUpdate, user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:

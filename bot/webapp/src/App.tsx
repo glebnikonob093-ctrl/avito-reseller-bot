@@ -160,7 +160,11 @@ export function App() {
       qs.set("limit", "5");
       if (selected) qs.set("catalog_id", String(selected.id));
       const body = await apiFetch(`/api/feed/live?${qs.toString()}`);
-      setItems(Array.isArray(body?.items) ? body.items : []);
+      const rows = Array.isArray(body?.items) ? body.items : [];
+      setItems(rows);
+      if (!rows.length && body?.debug?.reason) {
+        setError(`Live Avito: ${String(body.debug.reason)}`);
+      }
     } catch (e: any) {
       setError(e?.message ? String(e.message) : "Не удалось загрузить live-объявления Avito");
     } finally {
