@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from urllib.parse import urlparse
 
 import structlog
 from dotenv import load_dotenv
@@ -20,6 +21,16 @@ from app.migrations import create_all
 from app.sources.avito_public_web import AvitoPublicWebSource
 from app.sources.mock_listings import MockListingsSource
 from app.sources.registry import SourceRegistry
+
+
+def _origin_from_url(raw: str) -> str:
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return raw
 
 
 def _ensure_sqlite_dir(database_url: str) -> None:
@@ -58,7 +69,16 @@ async def _post_init(app: Application) -> None:
     app.bot_data["sources"] = sources
 
     # Mini App API server (FastAPI) in the same process.
-    allowed_origins = [o for o in {settings.webapp_url, "http://localhost:5173"} if o]
+    allowed_origins = [
+        o
+        for o in {
+            _origin_from_url(settings.webapp_url),
+            settings.webapp_url.strip(),
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        }
+        if o
+    ]
     api_app = create_api_app(
         session_factory=session_factory,
         bot_token=settings.bot_token,
