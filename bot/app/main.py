@@ -66,7 +66,8 @@ async def _post_init(app: Application) -> None:
                 proxy_url=settings.source_proxy_url,
             ),
             MockListingsSource(),
-        ]
+        ],
+        enable_mock_fallback=settings.enable_mock_fallback,
     )
 
     app.bot_data["engine"] = engine

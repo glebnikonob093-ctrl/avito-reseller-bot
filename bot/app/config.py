@@ -14,6 +14,13 @@ def _get_int(name: str, default: int) -> int:
         return default
 
 
+def _get_bool(name: str, default: bool) -> bool:
+    v = (os.getenv(name, "") or "").strip().lower()
+    if not v:
+        return default
+    return v in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     bot_token: str
@@ -30,6 +37,7 @@ class Settings:
     source_proxy_url: str
     scraper_provider: str
     scraper_api_key: str
+    enable_mock_fallback: bool
 
 
 def load_settings() -> Settings:
@@ -51,5 +59,6 @@ def load_settings() -> Settings:
         source_proxy_url=os.getenv("SOURCE_PROXY_URL", ""),
         scraper_provider=os.getenv("SCRAPER_PROVIDER", "scraperapi").strip().lower(),
         scraper_api_key=os.getenv("SCRAPER_API_KEY", "").strip(),
+        enable_mock_fallback=_get_bool("ENABLE_MOCK_FALLBACK", False),
     )
 

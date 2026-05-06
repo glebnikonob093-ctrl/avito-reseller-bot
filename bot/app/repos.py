@@ -137,7 +137,13 @@ async def get_user_by_tg_user_id(session: AsyncSession, *, tg_user_id: int) -> U
 
 
 async def list_feed_items(session: AsyncSession, *, user_id: int, limit: int) -> list[dict]:
-    q = select(SeenItem).where(SeenItem.user_id == user_id).order_by(SeenItem.first_seen_at.desc()).limit(limit)
+    q = (
+        select(SeenItem)
+        .where(SeenItem.user_id == user_id)
+        .where(SeenItem.is_mock.is_(False))
+        .order_by(SeenItem.first_seen_at.desc())
+        .limit(limit)
+    )
     rows = list((await session.execute(q)).scalars().all())
     out: list[dict] = []
     for it in rows:
@@ -205,6 +211,7 @@ async def list_feed_items_for_catalog(
 
     catalog_ids = [c.id for c in catalogs]
     q = select(SeenItem).where(SeenItem.user_id == user_id).where(SeenItem.subscription_id.in_(catalog_ids))
+    q = q.where(SeenItem.is_mock.is_(False))
     rows = list((await session.execute(q)).scalars().all())
     catalogs_by_id = {c.id: c for c in catalogs}
     raw_scores: dict[tuple[str, str], float] = {}

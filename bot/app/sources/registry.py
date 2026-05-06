@@ -8,8 +8,9 @@ from app.sources.base import ListingsSource
 
 
 class SourceRegistry:
-    def __init__(self, sources: list[ListingsSource]):
+    def __init__(self, sources: list[ListingsSource], *, enable_mock_fallback: bool = True):
         self._by_key: dict[str, ListingsSource] = {s.key: s for s in sources}
+        self._enable_mock_fallback = enable_mock_fallback
         self._last_status: dict[str, str] = {
             "time": "",
             "source": "",
@@ -63,9 +64,10 @@ class SourceRegistry:
         except Exception as e:
             self._set_status(source=sub.source, reason=f"error:{type(e).__name__}", items=0)
         fallback = self._by_key.get("mock_fallback")
-        if fallback:
+        if fallback and self._enable_mock_fallback:
             items = await fallback.fetch_latest(sub, limit=limit)
             self._set_status(source="mock_fallback", reason="ok", items=len(items))
             return items
+        self._set_status(source=sub.source, reason="no_real_data", items=0)
         return []
 
