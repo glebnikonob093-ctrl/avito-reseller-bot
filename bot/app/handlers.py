@@ -238,11 +238,22 @@ async def show_subs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def nav_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.callback_query or not update.callback_query.message:
         return
+    session_factory, settings, _ = _deps(context)
     await _hide_pressed_button(update)
-    _, settings, _ = _deps(context)
+    is_admin = False
+    if update.effective_user and update.effective_chat:
+        async with session_factory() as session:
+            db_user = await upsert_user(
+                session,
+                tg_user_id=update.effective_user.id,
+                chat_id=update.effective_chat.id,
+            )
+            await session.commit()
+        is_admin = (db_user.role or "user") == "admin"
     await update.callback_query.message.edit_text(
-        "Главное меню:",
-        reply_markup=main_menu_kb(webapp_url=settings.webapp_url),
+        "Привет! Управление каталогами и лентой теперь в Mini App.\n"
+        "Открой приложение кнопкой ниже.",
+        reply_markup=main_menu_kb(webapp_url=settings.webapp_url, is_admin=is_admin),
     )
     await update.callback_query.answer()
 
