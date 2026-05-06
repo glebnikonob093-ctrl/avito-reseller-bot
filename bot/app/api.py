@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import parse_qsl
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -21,6 +22,7 @@ from app.repos import (
     list_catalogs,
     list_feed_items_for_catalog,
     select_catalog,
+    upsert_user,
     update_catalog,
 )
 
@@ -69,6 +71,19 @@ def _catalog_to_dict(sub: Any) -> dict[str, Any]:
 
 def _utc_now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
+
+
+def _default_cities() -> list[dict[str, str]]:
+    return [
+        {"slug": "moskva", "title": "Москва"},
+        {"slug": "sankt-peterburg", "title": "Санкт-Петербург"},
+        {"slug": "ekaterinburg", "title": "Екатеринбург"},
+        {"slug": "novosibirsk", "title": "Новосибирск"},
+        {"slug": "kazan", "title": "Казань"},
+        {"slug": "nizhniy_novgorod", "title": "Нижний Новгород"},
+        {"slug": "krasnodar", "title": "Краснодар"},
+        {"slug": "samara", "title": "Самара"},
+    ]
 
 
 def _parse_init_data(init_data: str) -> dict[str, str]:
@@ -167,8 +182,7 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                # user not known to bot yet: tell UI to ask user to /start
-                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
+                db_user = await upsert_user(session, tg_user_id=user.tg_user_id, chat_id=user.tg_user_id)
             items = await list_feed_items_for_catalog(
                 session,
                 user_id=db_user.id,
@@ -185,7 +199,7 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
+                db_user = await upsert_user(session, tg_user_id=user.tg_user_id, chat_id=user.tg_user_id)
             items = await list_feed_items_for_catalog(
                 session,
                 user_id=db_user.id,
@@ -201,7 +215,7 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
+                db_user = await upsert_user(session, tg_user_id=user.tg_user_id, chat_id=user.tg_user_id)
             await session.commit()
         return {
             "id": db_user.id,
@@ -217,7 +231,7 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
+                db_user = await upsert_user(session, tg_user_id=user.tg_user_id, chat_id=user.tg_user_id)
             rows = await list_catalogs(session, user_id=db_user.id)
             await session.commit()
         return {"items": [_catalog_to_dict(s) for s in rows]}
@@ -309,26 +323,39 @@ def create_api_app(
         }
 
     @app.get("/api/cities")
-    async def cities() -> dict[str, Any]:
-        return {
-            "items": [
-                {"slug": "moskva", "title": "Москва"},
-                {"slug": "sankt-peterburg", "title": "Санкт-Петербург"},
-                {"slug": "ekaterinburg", "title": "Екатеринбург"},
-                {"slug": "novosibirsk", "title": "Новосибирск"},
-                {"slug": "kazan", "title": "Казань"},
-                {"slug": "nizhniy_novgorod", "title": "Нижний Новгород"},
-                {"slug": "krasnodar", "title": "Краснодар"},
-                {"slug": "samara", "title": "Самара"},
-                {"slug": "chelyabinsk", "title": "Челябинск"},
-                {"slug": "rostov-na-donu", "title": "Ростов-на-Дону"},
-                {"slug": "ufa", "title": "Уфа"},
-                {"slug": "perm", "title": "Пермь"},
-                {"slug": "voronezh", "title": "Воронеж"},
-                {"slug": "volgograd", "title": "Волгоград"},
-                {"slug": "sochi", "title": "Сочи"},
-            ]
-        }
+    async def cities(q: str = Query(default="", max_length=100), limit: int = Query(default=20, ge=1, le=50)) -> dict[str, Any]:
+        query = q.strip()
+        if not query:
+            return {"items": _default_cities()}
+        try:
+            async with httpx.AsyncClient(timeout=8.0, headers={"User-Agent": "avito-reseller-miniapp/1.0"}) as client:
+                r = await client.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={
+                        "format": "jsonv2",
+                        "countrycodes": "ru",
+                        "q": query,
+                        "limit": limit,
+                        "addressdetails": 0,
+                    },
+                )
+                r.raise_for_status()
+                rows = r.json()
+            items: list[dict[str, str]] = []
+            used: set[str] = set()
+            for row in rows:
+                name = str(row.get("display_name") or "").split(",")[0].strip()
+                slug = str(row.get("name") or name).lower().replace(" ", "-")
+                if not name or slug in used:
+                    continue
+                used.add(slug)
+                items.append({"slug": slug, "title": name})
+            if items:
+                return {"items": items}
+        except Exception:
+            pass
+        fallback = [c for c in _default_cities() if query.lower() in c["title"].lower() or query.lower() in c["slug"]]
+        return {"items": fallback[:limit]}
 
     return app
 

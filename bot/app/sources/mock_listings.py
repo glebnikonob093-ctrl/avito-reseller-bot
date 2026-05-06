@@ -10,9 +10,17 @@ from app.sources.base import Listing, ListingsSource
 class MockListingsSource(ListingsSource):
     key = "mock_fallback"
 
+    _RU_CITY = {
+        "moskva": "Москва",
+        "sankt-peterburg": "Санкт-Петербург",
+        "kazan": "Казань",
+        "ekaterinburg": "Екатеринбург",
+        "novosibirsk": "Новосибирск",
+    }
+
     async def fetch_latest(self, sub: Subscription, limit: int) -> list[Listing]:
         now = datetime.now(tz=timezone.utc)
-        city = sub.region.replace("-", " ").title()
+        city = self._RU_CITY.get(sub.region, sub.region.replace("-", " ").title())
         cat = sub.category.replace("-", " ").title()
         q = (sub.query or "товар").strip()
         out: list[Listing] = []
@@ -24,7 +32,7 @@ class MockListingsSource(ListingsSource):
                 Listing(
                     external_id=ext,
                     url=f"https://example.com/mock/{ext}",
-                    title=title,
+                    title=title.replace("[", "").replace("]", ""),
                     price=price,
                     published_at=now - timedelta(minutes=i * 9),
                     city=city,

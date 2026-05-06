@@ -19,8 +19,21 @@ log = structlog.get_logger()
 def _format_listing(item: Listing) -> str:
     price = f"{item.price} ₽" if item.price is not None else "—"
     city = item.city or "—"
-    tag = " [mock]" if item.is_mock else ""
-    return f"🆕{tag} {item.title}\nГород: {city}\nЦена: {price}\n{item.url}"
+    title = item.title or "Без названия"
+    return f"🆕 {title}\nГород: {city}\nЦена: {price}\n{item.url}"
+
+
+def _build_caption(item: Listing) -> str:
+    price = f"{item.price} ₽" if item.price is not None else "—"
+    city = item.city or "—"
+    title = item.title or "Без названия"
+    desc = (item.description or "").strip()
+    if len(desc) > 350:
+        desc = desc[:347] + "..."
+    caption = f"{title}\nГород: {city}\nЦена: {price}"
+    if desc:
+        caption += f"\n{desc}"
+    return caption[:950]
 
 
 async def run_monitor_once(app: Application) -> None:
@@ -74,11 +87,23 @@ async def run_monitor_once(app: Application) -> None:
         # Send oldest-first to reduce “spam feel”
         for it in reversed(new_items):
             try:
-                await app.bot.send_message(
-                    chat_id=user.chat_id,
-                    text=_format_listing(it),
-                    disable_web_page_preview=True,
-                )
+                if it.photo_url:
+                    await app.bot.send_photo(
+                        chat_id=user.chat_id,
+                        photo=it.photo_url,
+                        caption=_build_caption(it),
+                    )
+                    await app.bot.send_message(
+                        chat_id=user.chat_id,
+                        text=it.url,
+                        disable_web_page_preview=False,
+                    )
+                else:
+                    await app.bot.send_message(
+                        chat_id=user.chat_id,
+                        text=_format_listing(it),
+                        disable_web_page_preview=True,
+                    )
                 await asyncio.sleep(0.2)
             except Exception as e:
                 log.warning("monitor_notify_failed", user_id=user.id, sub_id=sub.id, err=str(e))

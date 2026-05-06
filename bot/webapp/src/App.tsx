@@ -164,8 +164,9 @@ export function App() {
   }
 
   async function loadCities() {
+    const q = encodeURIComponent(newCatalogRegion.trim());
     try {
-      const body = await apiFetch("/api/cities");
+      const body = await apiFetch(`/api/cities?q=${q}&limit=25`);
       const rows = Array.isArray(body?.items) ? body.items : [];
       setCities(rows);
     } catch {
@@ -226,9 +227,13 @@ export function App() {
       // ignore
     }
     void loadCategories();
-    void loadCities();
     void loadCatalogs();
     void loadMe();
+  useEffect(() => {
+    void loadCities();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newCatalogRegion]);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -302,9 +307,9 @@ export function App() {
           <div className="error">
             <div className="errorTitle">Ошибка</div>
             <div>{error}</div>
-            {error.includes("User not found") ? (
+            {error.includes("Пользователь не найден") ? (
               <div style={{ marginTop: 8, opacity: 0.9 }}>
-                Открой бота и выполни <code>/start</code>, затем попробуй снова.
+                Нажми /start в боте и повтори попытку.
               </div>
             ) : null}
           </div>
@@ -457,7 +462,7 @@ export function App() {
                       </a>
                     </>
                   ) : null}
-                  {it.is_mock ? " · demo" : ""}
+                  {it.is_mock ? " · тестовые данные" : ""}
                 </div>
               </div>
             ))}
@@ -511,7 +516,7 @@ export function App() {
                   </div>
                   <div className="profileRow">
                     <span className="meta">Роль</span>
-                    <strong>{profile.is_admin ? "admin" : "user"}</strong>
+                    <strong>{profile.is_admin ? "Администратор" : "Пользователь"}</strong>
                   </div>
                 </div>
               ) : (
