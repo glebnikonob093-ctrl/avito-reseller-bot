@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+
+def main_menu_kb(*, webapp_url: str = "") -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if webapp_url:
+        rows.append([InlineKeyboardButton(text="🧾 Лента (Mini App)", web_app=WebAppInfo(url=webapp_url))])
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="➕ Добавить подписку", callback_data="sub:add")],
+            [InlineKeyboardButton(text="📌 Мои подписки", callback_data="sub:list")],
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
+
+
+def subs_list_kb(sub_ids: list[int]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for sub_id in sub_ids:
+        rows.append(
+            [
+                InlineKeyboardButton(text=f"Подписка #{sub_id}", callback_data=f"sub:open:{sub_id}"),
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="nav:home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def sub_actions_kb(sub_id: int, is_paused: bool) -> InlineKeyboardMarkup:
+    pause_btn = InlineKeyboardButton(
+        text=("▶️ Включить" if is_paused else "⏸ Пауза"),
+        callback_data=f"sub:pause:{sub_id}:{0 if is_paused else 1}",
+    )
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(text="🆕 Показать новые (топ-10)", callback_data=f"sub:peek:{sub_id}")],
+            [pause_btn],
+            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"sub:del:{sub_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="sub:list")],
+        ]
+    )
+

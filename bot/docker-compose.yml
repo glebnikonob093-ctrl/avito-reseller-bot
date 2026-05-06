@@ -1,0 +1,25 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+
+  # Optional: switch to Postgres by using the DATABASE_URL below
+  # postgres:
+  #   image: postgres:16
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: bot
+  #     POSTGRES_PASSWORD: bot
+  #     POSTGRES_DB: bot
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+
+# volumes:
+#   pgdata:
+
