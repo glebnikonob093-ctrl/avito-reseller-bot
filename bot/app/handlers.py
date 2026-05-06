@@ -27,7 +27,7 @@ from app.repos import (
 )
 from app.models import SeenItem, Subscription, User
 from app.sources.registry import SourceRegistry
-from app.ui import admin_menu_kb, main_menu_kb, sub_actions_kb, subs_list_kb
+from app.ui import admin_menu_kb, main_menu_kb, profile_menu_kb, sub_actions_kb, subs_list_kb
 from app.scoring import deal_score
 
 
@@ -39,6 +39,18 @@ def _deps(context: ContextTypes.DEFAULT_TYPE) -> tuple[async_sessionmaker[AsyncS
     settings: Settings = context.application.bot_data["settings"]
     sources: SourceRegistry = context.application.bot_data["sources"]
     return session_factory, settings, sources
+
+
+async def _hide_pressed_button(update: Update) -> None:
+    """Hide inline keyboard on the pressed message."""
+    q = update.callback_query
+    if not q or not q.message:
+        return
+    try:
+        await q.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        # Message can be already edited/replaced by another handler.
+        pass
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -94,7 +106,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=main_menu_kb(webapp_url=settings.webapp_url, is_admin=((db_user.role or "user") == "admin")),
+        reply_markup=profile_menu_kb(webapp_url=settings.webapp_url, is_admin=((db_user.role or "user") == "admin")),
     )
 
 
@@ -107,6 +119,7 @@ async def cb_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         or not update.effective_chat
     ):
         return
+    await _hide_pressed_button(update)
     async with session_factory() as session:
         db_user = await upsert_user(session, tg_user_id=update.effective_user.id, chat_id=update.effective_chat.id)
         db_user = (await get_user_by_tg_user_id(session, tg_user_id=update.effective_user.id)) or db_user
@@ -119,7 +132,7 @@ async def cb_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.callback_query.message.edit_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=main_menu_kb(webapp_url=settings.webapp_url, is_admin=((db_user.role or "user") == "admin")),
+        reply_markup=profile_menu_kb(webapp_url=settings.webapp_url, is_admin=((db_user.role or "user") == "admin")),
     )
     await update.callback_query.answer()
 
@@ -146,6 +159,7 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cb_admin_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.callback_query or not update.callback_query.message:
         return
+    await _hide_pressed_button(update)
     if not await _is_admin(update, context):
         await update.callback_query.answer("Нет доступа", show_alert=True)
         return
@@ -157,6 +171,7 @@ async def cb_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     session_factory, _, _ = _deps(context)
     if not update.callback_query or not update.callback_query.message:
         return
+    await _hide_pressed_button(update)
     if not await _is_admin(update, context):
         await update.callback_query.answer("Нет доступа", show_alert=True)
         return
@@ -223,6 +238,7 @@ async def show_subs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def nav_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.callback_query or not update.callback_query.message:
         return
+    await _hide_pressed_button(update)
     _, settings, _ = _deps(context)
     await update.callback_query.message.edit_text(
         "Главное меню:",
@@ -232,6 +248,7 @@ async def nav_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cb_sub_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _hide_pressed_button(update)
     await show_subs(update, context)
     if update.callback_query:
         await update.callback_query.answer()
@@ -241,6 +258,7 @@ async def sub_add_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     _, settings, _ = _deps(context)
     if not update.callback_query or not update.callback_query.message:
         return ConversationHandler.END
+    await _hide_pressed_button(update)
     context.user_data.clear()
     await update.callback_query.message.edit_text(
         "Введите категорию (slug). Например: `telefony`, `noutbuki`, `odezhda`.\n\n"
@@ -351,6 +369,7 @@ async def sub_open(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session_factory, _, _ = _deps(context)
     if not update.callback_query or not update.callback_query.message or not update.effective_user or not update.effective_chat:
         return
+    await _hide_pressed_button(update)
     _, _, sub_id_s = update.callback_query.data.split(":", 2)
     sub_id = int(sub_id_s)
     async with session_factory() as session:
@@ -381,6 +400,7 @@ async def sub_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session_factory, _, _ = _deps(context)
     if not update.callback_query or not update.callback_query.message or not update.effective_user or not update.effective_chat:
         return
+    await _hide_pressed_button(update)
     _, _, rest = update.callback_query.data.split(":", 2)
     sub_id_s, flag_s = rest.split(":")
     sub_id = int(sub_id_s)
@@ -404,6 +424,7 @@ async def sub_del(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session_factory, _, _ = _deps(context)
     if not update.callback_query or not update.callback_query.message or not update.effective_user or not update.effective_chat:
         return
+    await _hide_pressed_button(update)
     _, _, sub_id_s = update.callback_query.data.split(":", 2)
     sub_id = int(sub_id_s)
     async with session_factory() as session:
@@ -423,6 +444,7 @@ async def sub_peek(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session_factory, _, sources = _deps(context)
     if not update.callback_query or not update.callback_query.message or not update.effective_user or not update.effective_chat:
         return
+    await _hide_pressed_button(update)
     _, _, sub_id_s = update.callback_query.data.split(":", 2)
     sub_id = int(sub_id_s)
     async with session_factory() as session:

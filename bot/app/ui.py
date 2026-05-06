@@ -22,6 +22,16 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
     )
 
 
+def profile_menu_kb(*, webapp_url: str = "", is_admin: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if webapp_url:
+        rows.append([InlineKeyboardButton(text="🧾 Открыть Mini App", web_app=WebAppInfo(url=webapp_url))])
+    if is_admin:
+        rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin:home")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="nav:home")])
+    return InlineKeyboardMarkup(rows)
+
+
 def subs_list_kb(sub_ids: list[int]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for sub_id in sub_ids:
