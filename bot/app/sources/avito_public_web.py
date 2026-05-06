@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from random import randint
 from urllib.parse import urlencode
 
 import httpx
@@ -25,17 +26,31 @@ class AvitoPublicWebSource(ListingsSource):
 
     def __init__(self, *, max_requests_per_minute: int = 20, proxy_url: str = "") -> None:
         self._limiter = SimpleRateLimiter(max_per_minute=max_requests_per_minute)
-        proxy = proxy_url.strip() or None
-        self._client = httpx.AsyncClient(
-            proxy=proxy,
-            timeout=httpx.Timeout(20.0),
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; AvitoResellerBot/0.1; +https://example.invalid)"
-            },
-        )
+        raw = (proxy_url or "").replace(";", ",")
+        self._proxies = [p.strip() for p in raw.split(",") if p.strip()]
+        self._proxies.append("")  # direct connection fallback
+        self._clients: dict[str, httpx.AsyncClient] = {}
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        for c in self._clients.values():
+            await c.aclose()
+
+    def _get_client(self, proxy: str) -> httpx.AsyncClient:
+        key = proxy.strip()
+        if key in self._clients:
+            return self._clients[key]
+        self._clients[key] = httpx.AsyncClient(
+            proxy=(key or None),
+            timeout=httpx.Timeout(20.0),
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+                ),
+                "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+            },
+        )
+        return self._clients[key]
 
     def _build_url(self, sub: Subscription) -> str:
         # Avito URL scheme varies; we use a conservative pattern:
@@ -61,12 +76,32 @@ class AvitoPublicWebSource(ListingsSource):
             params["pmax"] = str(sub.price_max)
         return f"{base}?{urlencode(params)}"
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, min=0.5, max=6))
+    def _looks_blocked(self, html: str) -> bool:
+        low = html.lower()
+        return ("captcha" in low) or ("доступ ограничен" in low) or ("access denied" in low)
+
+    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=0.5, min=0.5, max=4))
     async def _get_html(self, url: str) -> str:
         await self._limiter.wait()
-        r = await self._client.get(url, follow_redirects=True)
-        r.raise_for_status()
-        return r.text
+        if not self._proxies:
+            raise RuntimeError("No proxy routes configured")
+        start = randint(0, max(0, len(self._proxies) - 1))
+        last_error: Exception | None = None
+        for i in range(len(self._proxies)):
+            proxy = self._proxies[(start + i) % len(self._proxies)]
+            try:
+                client = self._get_client(proxy)
+                r = await client.get(url, follow_redirects=True)
+                r.raise_for_status()
+                if self._looks_blocked(r.text):
+                    continue
+                return r.text
+            except Exception as e:
+                last_error = e
+                continue
+        if last_error:
+            raise last_error
+        raise RuntimeError("All proxy routes failed")
 
     def _parse_price(self, text: str) -> int | None:
         digits = re.sub(r"[^\d]", "", text or "")
