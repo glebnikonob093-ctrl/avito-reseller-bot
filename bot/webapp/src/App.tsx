@@ -64,7 +64,7 @@ function formatTime(iso: string | null) {
 
 export function App() {
   const tg = window.Telegram?.WebApp;
-  const initData = tg?.initData ?? "";
+  const [initData, setInitData] = useState("");
 
   const apiBase = useMemo(() => {
     // Priority: explicit env -> local dev API -> same-origin production API.
@@ -102,6 +102,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [runtimeError, setRuntimeError] = useState("");
+  const isApiReady = initData.trim().length > 0;
 
   async function apiFetch(path: string, init?: RequestInit) {
     let r: Response;
@@ -125,6 +126,7 @@ export function App() {
   }
 
   async function loadFeed() {
+    if (!isApiReady) return;
     setLoading(true);
     setError("");
     try {
@@ -148,6 +150,7 @@ export function App() {
   }
 
   async function loadCatalogs() {
+    if (!isApiReady) return;
     try {
       const body = await apiFetch("/api/catalogs");
       setCatalogs(Array.isArray(body?.items) ? body.items : []);
@@ -157,6 +160,7 @@ export function App() {
   }
 
   async function loadNotifications() {
+    if (!isApiReady) return;
     setError("");
     try {
       const body = await apiFetch("/api/notifications?limit=20");
@@ -167,6 +171,7 @@ export function App() {
   }
 
   async function loadMe() {
+    if (!isApiReady) return;
     try {
       const body = await apiFetch("/api/me");
       setProfile(body as UserProfile);
@@ -181,6 +186,7 @@ export function App() {
   }
 
   async function loadCategories() {
+    if (!isApiReady) return;
     try {
       const body = await apiFetch("/api/categories");
       const rows = Array.isArray(body?.items) ? body.items : [];
@@ -191,6 +197,7 @@ export function App() {
   }
 
   async function loadCities(query: string) {
+    if (!isApiReady) return;
     const normalized = query.trim();
     setCitiesError("");
     if (normalized.length < 2) {
@@ -212,6 +219,7 @@ export function App() {
   }
 
   async function createCatalog() {
+    if (!isApiReady) return;
     setError("");
     const category = newCatalogCategory.trim();
     const region = newCatalogRegion.trim();
@@ -245,6 +253,7 @@ export function App() {
   }
 
   async function selectCatalog(catalogId: number) {
+    if (!isApiReady) return;
     setError("");
     try {
       await apiFetch(`/api/catalogs/${catalogId}/select`, { method: "POST" });
@@ -256,6 +265,7 @@ export function App() {
   }
 
   async function deleteCatalog(catalogId: number) {
+    if (!isApiReady) return;
     setError("");
     try {
       await apiFetch(`/api/catalogs/${catalogId}`, { method: "DELETE" });
@@ -267,6 +277,7 @@ export function App() {
   }
 
   async function updateWorkStatus(item: FeedItem, status: FeedItem["work_status"]) {
+    if (!isApiReady) return;
     try {
       await apiFetch("/api/work-status", {
         method: "POST",
@@ -302,13 +313,36 @@ export function App() {
     } catch {
       // ignore
     }
-    void loadCategories();
-    void loadCatalogs();
-    void loadMe();
+    const syncInitData = () => {
+      const v = (window.Telegram?.WebApp?.initData || "").trim();
+      if (v) {
+        setInitData(v);
+        return true;
+      }
+      return false;
+    };
+    if (!syncInitData()) {
+      const timer = window.setInterval(() => {
+        if (syncInitData()) {
+          window.clearInterval(timer);
+        }
+      }, 250);
+      window.setTimeout(() => window.clearInterval(timer), 5000);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
+    if (!isApiReady) return;
+    setError("");
+    void loadCategories();
+    void loadCatalogs();
+    void loadMe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isApiReady]);
+
+  useEffect(() => {
+    if (!isApiReady) return;
     const t = window.setTimeout(() => {
       void loadCities(newCatalogRegion);
     }, 300);
@@ -317,11 +351,13 @@ export function App() {
   }, [newCatalogRegion]);
 
   useEffect(() => {
+    if (!isApiReady) return;
     void loadFeed();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortMode, catalogs.find((c) => c.is_selected)?.id, catalogs.length, minDealScore, maxPriceFilter, onlyWithPhoto, workStatusFilter]);
 
   useEffect(() => {
+    if (!isApiReady) return;
     if (tab === "notifications") {
       void loadNotifications();
     }
@@ -669,6 +705,13 @@ export function App() {
           <div className="error">
             <div className="errorTitle">Ошибка интерфейса</div>
             <div>{runtimeError}</div>
+          </div>
+        ) : null}
+
+        {!isApiReady ? (
+          <div className="error">
+            <div className="errorTitle">Подключение к Telegram</div>
+            <div>Инициализирую Mini App...</div>
           </div>
         ) : null}
 
