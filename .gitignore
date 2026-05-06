@@ -1,0 +1,3 @@
+bot/webapp/node_modules/
+bot/webapp/dist/
+bot/data/*.db

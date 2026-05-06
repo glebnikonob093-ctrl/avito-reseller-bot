@@ -63,10 +63,16 @@ export function App() {
   const initData = tg?.initData ?? "";
 
   const apiBase = useMemo(() => {
-    // By default, API is served from bot process at http://127.0.0.1:8000
-    // For tunnel/prod you can serve frontend from same origin as API.
+    // Priority: explicit env -> local dev API -> same-origin production API.
     const fromEnv = (import.meta as any).env?.VITE_API_BASE as string | undefined;
-    return (fromEnv && fromEnv.trim()) || "http://127.0.0.1:8000";
+    const normalizedEnv = fromEnv?.trim().replace(/\/+$/, "");
+    if (normalizedEnv) return normalizedEnv;
+
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      return "http://127.0.0.1:8000";
+    }
+    return window.location.origin.replace(/\/+$/, "");
   }, []);
 
   const [tab, setTab] = useState<"feed" | "catalogs" | "notifications" | "profile">("feed");
@@ -88,13 +94,18 @@ export function App() {
   const [runtimeError, setRuntimeError] = useState("");
 
   async function apiFetch(path: string, init?: RequestInit) {
-    const r = await fetch(`${apiBase}${path}`, {
-      ...init,
-      headers: {
-        "X-Telegram-Init-Data": initData,
-        ...(init?.headers || {}),
-      },
-    });
+    let r: Response;
+    try {
+      r = await fetch(`${apiBase}${path}`, {
+        ...init,
+        headers: {
+          "X-Telegram-Init-Data": initData,
+          ...(init?.headers || {}),
+        },
+      });
+    } catch {
+      throw new Error(`Load failed: нет соединения с API (${apiBase})`);
+    }
     const body = await r.json().catch(() => ({}));
     if (!r.ok) {
       const msg = body?.detail || `HTTP ${r.status}`;
