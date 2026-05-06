@@ -238,13 +238,13 @@ export function App() {
     void loadCategories();
     void loadCatalogs();
     void loadMe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     void loadCities();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newCatalogRegion]);
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     void loadFeed();
