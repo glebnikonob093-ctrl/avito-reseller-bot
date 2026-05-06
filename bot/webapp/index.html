@@ -5,9 +5,42 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Avito Reseller Mini App</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+      html, body { margin: 0; height: 100%; background: #070d17; color: #e5edff; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+      #boot-fallback { display: none; padding: 16px; }
+      .fb-card { border: 1px solid rgba(255,255,255,.2); border-radius: 12px; padding: 12px; background: rgba(255,255,255,.04); }
+      .fb-title { font-weight: 700; margin-bottom: 8px; }
+      .fb-text { opacity: .9; line-height: 1.4; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="boot-fallback">
+      <div class="fb-card">
+        <div class="fb-title">Приложение не загрузилось</div>
+        <div class="fb-text" id="boot-fallback-text">Проблема при запуске Mini App.</div>
+      </div>
+    </div>
+    <script>
+      window.__APP_BOOTED__ = false;
+      window.addEventListener("error", function (e) {
+        var el = document.getElementById("boot-fallback");
+        var txt = document.getElementById("boot-fallback-text");
+        if (el && txt) {
+          txt.textContent = "Ошибка JS: " + (e && e.message ? e.message : "неизвестная");
+          el.style.display = "block";
+        }
+      });
+      setTimeout(function () {
+        if (window.__APP_BOOTED__) return;
+        var el = document.getElementById("boot-fallback");
+        var txt = document.getElementById("boot-fallback-text");
+        if (el && txt) {
+          txt.textContent = "React не инициализировался. Проверь деплой фронта и очисти кэш Telegram Mini App.";
+          el.style.display = "block";
+        }
+      }, 2500);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
