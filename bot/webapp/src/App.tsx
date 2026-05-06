@@ -74,7 +74,7 @@ export function App() {
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [cities, setCities] = useState<City[]>([]);
-  const [citySearch, setCitySearch] = useState("");
+  const [citySearchOpen, setCitySearchOpen] = useState(false);
   const [newCatalogName, setNewCatalogName] = useState("");
   const [newCatalogCategory, setNewCatalogCategory] = useState("telefony");
   const [newCatalogRegion, setNewCatalogRegion] = useState("moskva");
@@ -245,7 +245,7 @@ export function App() {
   }, [tab]);
 
   const filteredCities = cities.filter((c) => {
-    const q = citySearch.trim().toLowerCase();
+    const q = newCatalogRegion.trim().toLowerCase();
     if (!q) return true;
     return c.title.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q);
   });
@@ -331,26 +331,36 @@ export function App() {
                   </option>
                 ))}
               </select>
-              <input
-                className="input"
-                value={newCatalogRegion}
-                placeholder="Регион (slug)"
-                onChange={(e) => setNewCatalogRegion(e.target.value)}
-                list="city-options"
-              />
-              <input
-                className="input"
-                value={citySearch}
-                placeholder="Поиск города"
-                onChange={(e) => setCitySearch(e.target.value)}
-              />
-              <datalist id="city-options">
-                {filteredCities.map((city) => (
-                  <option key={city.slug} value={city.slug}>
-                    {city.title}
-                  </option>
-                ))}
-              </datalist>
+              <div className="citySelectWrap">
+                <input
+                  className="input"
+                  value={newCatalogRegion}
+                  placeholder="Выберите город"
+                  onChange={(e) => {
+                    setNewCatalogRegion(e.target.value);
+                    setCitySearchOpen(true);
+                  }}
+                  onFocus={() => setCitySearchOpen(true)}
+                />
+                {citySearchOpen ? (
+                  <div className="cityDropdown">
+                    {filteredCities.slice(0, 12).map((city) => (
+                      <button
+                        key={city.slug}
+                        type="button"
+                        className="cityOption"
+                        onClick={() => {
+                          setNewCatalogRegion(city.slug);
+                          setCitySearchOpen(false);
+                        }}
+                      >
+                        {city.title}
+                      </button>
+                    ))}
+                    {!filteredCities.length ? <div className="cityEmpty">Город не найден</div> : null}
+                  </div>
+                ) : null}
+              </div>
               <input
                 className="input"
                 value={newCatalogQuery}
