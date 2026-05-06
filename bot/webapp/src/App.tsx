@@ -32,6 +32,20 @@ type Category = {
   title: string;
 };
 
+type City = {
+  slug: string;
+  title: string;
+};
+
+type UserProfile = {
+  id: number;
+  tg_user_id: number;
+  first_name: string;
+  username: string;
+  role: "user" | "admin";
+  is_admin: boolean;
+};
+
 function formatPrice(p: number | null) {
   if (p === null || Number.isNaN(p)) return "—";
   return `${p.toLocaleString("ru-RU")} ₽`;
@@ -55,10 +69,12 @@ export function App() {
     return (fromEnv && fromEnv.trim()) || "http://127.0.0.1:8000";
   }, []);
 
-  const [tab, setTab] = useState<"feed" | "catalogs" | "notifications">("feed");
+  const [tab, setTab] = useState<"feed" | "catalogs" | "notifications" | "profile">("feed");
   const [sortMode, setSortMode] = useState<"newest" | "best_deals">("newest");
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [cities, setCities] = useState<City[]>([]);
+  const [citySearch, setCitySearch] = useState("");
   const [newCatalogName, setNewCatalogName] = useState("");
   const [newCatalogCategory, setNewCatalogCategory] = useState("telefony");
   const [newCatalogRegion, setNewCatalogRegion] = useState("moskva");
@@ -66,6 +82,7 @@ export function App() {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [notifications, setNotifications] = useState<FeedItem[]>([]);
   const [userRole, setUserRole] = useState<"user" | "admin">("user");
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
 
@@ -122,6 +139,7 @@ export function App() {
   async function loadMe() {
     try {
       const body = await apiFetch("/api/me");
+      setProfile(body as UserProfile);
       if (body?.role === "admin") {
         setUserRole("admin");
       } else {
@@ -140,6 +158,16 @@ export function App() {
       if (rows.length && !rows.some((r: Category) => r.slug === newCatalogCategory)) {
         setNewCatalogCategory(rows[0].slug);
       }
+    } catch {
+      // optional endpoint
+    }
+  }
+
+  async function loadCities() {
+    try {
+      const body = await apiFetch("/api/cities");
+      const rows = Array.isArray(body?.items) ? body.items : [];
+      setCities(rows);
     } catch {
       // optional endpoint
     }
@@ -198,6 +226,7 @@ export function App() {
       // ignore
     }
     void loadCategories();
+    void loadCities();
     void loadCatalogs();
     void loadMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,6 +244,12 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  const filteredCities = cities.filter((c) => {
+    const q = citySearch.trim().toLowerCase();
+    if (!q) return true;
+    return c.title.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q);
+  });
+
   const scheme = tg?.colorScheme ?? "dark";
 
   return (
@@ -231,7 +266,7 @@ export function App() {
                   </>
                 ) : null}
                 {scheme === "dark" ? "Тёмная" : "Светлая"} тема
-                {userRole === "admin" ? " · admin" : ""}
+                {userRole === "admin" ? " · админ" : ""}
               </div>
             </div>
             <button className="btn" onClick={loadFeed} disabled={loading}>
@@ -253,6 +288,12 @@ export function App() {
               onClick={() => setTab("notifications")}
             >
               Уведомления
+            </button>
+            <button
+              className={`tabBtn ${tab === "profile" ? "tabBtnActive" : ""}`}
+              onClick={() => setTab("profile")}
+            >
+              Профиль
             </button>
           </div>
         </div>
@@ -295,7 +336,21 @@ export function App() {
                 value={newCatalogRegion}
                 placeholder="Регион (slug)"
                 onChange={(e) => setNewCatalogRegion(e.target.value)}
+                list="city-options"
               />
+              <input
+                className="input"
+                value={citySearch}
+                placeholder="Поиск города"
+                onChange={(e) => setCitySearch(e.target.value)}
+              />
+              <datalist id="city-options">
+                {filteredCities.map((city) => (
+                  <option key={city.slug} value={city.slug}>
+                    {city.title}
+                  </option>
+                ))}
+              </datalist>
               <input
                 className="input"
                 value={newCatalogQuery}
@@ -399,6 +454,7 @@ export function App() {
           </div>
         </div>
         ) : (
+          tab === "notifications" ? (
           <div className="card feedCard">
             <div className="sectionTitle">Последние уведомления</div>
             {!notifications.length && !error ? (
@@ -426,6 +482,36 @@ export function App() {
               ))}
             </div>
           </div>
+          ) : (
+            <div className="card feedCard">
+              <div className="sectionTitle">Профиль пользователя</div>
+              {profile ? (
+                <div className="profileCard">
+                  <div className="profileRow">
+                    <span className="meta">Имя</span>
+                    <strong>{profile.first_name || "—"}</strong>
+                  </div>
+                  <div className="profileRow">
+                    <span className="meta">Username</span>
+                    <strong>{profile.username ? `@${profile.username}` : "не указан"}</strong>
+                  </div>
+                  <div className="profileRow">
+                    <span className="meta">Telegram ID</span>
+                    <strong>{profile.tg_user_id}</strong>
+                  </div>
+                  <div className="profileRow">
+                    <span className="meta">Роль</span>
+                    <strong>{profile.is_admin ? "admin" : "user"}</strong>
+                  </div>
+                </div>
+              ) : (
+                <div className="emptyState">
+                  <div className="emptyEmoji">👤</div>
+                  <div className="emptyTitle">Профиль загружается</div>
+                </div>
+              )}
+            </div>
+          )
         )}
       </div>
     </div>

@@ -28,6 +28,8 @@ from app.repos import (
 @dataclass(frozen=True)
 class TgWebAppUser:
     tg_user_id: int
+    username: str
+    first_name: str
 
 
 class CatalogCreate(BaseModel):
@@ -78,7 +80,7 @@ def _verify_init_data(*, init_data: str, bot_token: str) -> dict[str, Any]:
     data = _parse_init_data(init_data)
     given_hash = data.get("hash", "")
     if not given_hash:
-        raise HTTPException(status_code=401, detail="Missing initData hash")
+        raise HTTPException(status_code=401, detail="Отсутствует hash в initData")
 
     check_pairs: list[str] = []
     for k in sorted(data.keys()):
@@ -101,20 +103,20 @@ def _verify_init_data(*, init_data: str, bot_token: str) -> dict[str, Any]:
     ).hexdigest()
 
     if not hmac.compare_digest(calculated_hash, given_hash):
-        raise HTTPException(status_code=401, detail="Invalid initData signature")
+        raise HTTPException(status_code=401, detail="Неверная подпись initData")
 
     # Telegram sends `user` as a JSON string
     user_raw = data.get("user")
     if not user_raw:
-        raise HTTPException(status_code=401, detail="Missing user in initData")
+        raise HTTPException(status_code=401, detail="Отсутствует пользователь в initData")
     try:
         user_obj = json.loads(user_raw)
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid user JSON in initData")
+        raise HTTPException(status_code=401, detail="Некорректный JSON пользователя в initData")
 
     tg_user_id = user_obj.get("id")
     if not isinstance(tg_user_id, int):
-        raise HTTPException(status_code=401, detail="Invalid user id in initData")
+        raise HTTPException(status_code=401, detail="Некорректный id пользователя в initData")
 
     return {"tg_user_id": tg_user_id, "user": user_obj, "raw": data}
 
@@ -132,7 +134,7 @@ def create_api_app(
             CORSMiddleware,
             allow_origins=allowed_origins,
             allow_credentials=False,
-            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["*"],
         )
 
@@ -140,9 +142,14 @@ def create_api_app(
         x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
     ) -> TgWebAppUser:
         if not x_telegram_init_data:
-            raise HTTPException(status_code=401, detail="Missing X-Telegram-Init-Data header")
+            raise HTTPException(status_code=401, detail="Отсутствует заголовок X-Telegram-Init-Data")
         verified = _verify_init_data(init_data=x_telegram_init_data, bot_token=bot_token)
-        return TgWebAppUser(tg_user_id=int(verified["tg_user_id"]))
+        user_obj = verified.get("user", {})
+        return TgWebAppUser(
+            tg_user_id=int(verified["tg_user_id"]),
+            username=str(user_obj.get("username") or ""),
+            first_name=str(user_obj.get("first_name") or ""),
+        )
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
@@ -161,7 +168,7 @@ def create_api_app(
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
                 # user not known to bot yet: tell UI to ask user to /start
-                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
             items = await list_feed_items_for_catalog(
                 session,
                 user_id=db_user.id,
@@ -178,7 +185,7 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
             items = await list_feed_items_for_catalog(
                 session,
                 user_id=db_user.id,
@@ -194,11 +201,13 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
             await session.commit()
         return {
             "id": db_user.id,
             "tg_user_id": db_user.tg_user_id,
+            "first_name": user.first_name,
+            "username": user.username,
             "role": db_user.role or "user",
             "is_admin": (db_user.role or "user") == "admin",
         }
@@ -208,7 +217,7 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
             rows = await list_catalogs(session, user_id=db_user.id)
             await session.commit()
         return {"items": [_catalog_to_dict(s) for s in rows]}
@@ -218,7 +227,7 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
             created = await create_catalog(
                 session,
                 user_id=db_user.id,
@@ -243,7 +252,7 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
             updated = await update_catalog(
                 session,
                 user_id=db_user.id,
@@ -257,7 +266,7 @@ def create_api_app(
                 is_paused=payload.is_paused,
             )
             if not updated:
-                raise HTTPException(status_code=404, detail="Catalog not found")
+                raise HTTPException(status_code=404, detail="Каталог не найден")
             await session.commit()
         return {"item": _catalog_to_dict(updated)}
 
@@ -266,10 +275,10 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
             selected = await select_catalog(session, user_id=db_user.id, catalog_id=catalog_id)
             if not selected:
-                raise HTTPException(status_code=404, detail="Catalog not found")
+                raise HTTPException(status_code=404, detail="Каталог не найден")
             await session.commit()
         return {"item": _catalog_to_dict(selected)}
 
@@ -278,10 +287,10 @@ def create_api_app(
         async with session_factory() as session:
             db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
             if not db_user:
-                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+                raise HTTPException(status_code=404, detail="Пользователь не найден. Сначала отправь /start в боте.")
             existing = await get_subscription(session, user_id=db_user.id, subscription_id=catalog_id)
             if not existing:
-                raise HTTPException(status_code=404, detail="Catalog not found")
+                raise HTTPException(status_code=404, detail="Каталог не найден")
             await delete_subscription(session, subscription_id=catalog_id)
             await session.commit()
         return {"ok": True}
@@ -296,6 +305,28 @@ def create_api_app(
                 {"slug": "odezhda", "title": "Одежда"},
                 {"slug": "detskie_tovary", "title": "Детские товары"},
                 {"slug": "bytovaya_tehnika", "title": "Бытовая техника"},
+            ]
+        }
+
+    @app.get("/api/cities")
+    async def cities() -> dict[str, Any]:
+        return {
+            "items": [
+                {"slug": "moskva", "title": "Москва"},
+                {"slug": "sankt-peterburg", "title": "Санкт-Петербург"},
+                {"slug": "ekaterinburg", "title": "Екатеринбург"},
+                {"slug": "novosibirsk", "title": "Новосибирск"},
+                {"slug": "kazan", "title": "Казань"},
+                {"slug": "nizhniy_novgorod", "title": "Нижний Новгород"},
+                {"slug": "krasnodar", "title": "Краснодар"},
+                {"slug": "samara", "title": "Самара"},
+                {"slug": "chelyabinsk", "title": "Челябинск"},
+                {"slug": "rostov-na-donu", "title": "Ростов-на-Дону"},
+                {"slug": "ufa", "title": "Уфа"},
+                {"slug": "perm", "title": "Пермь"},
+                {"slug": "voronezh", "title": "Воронеж"},
+                {"slug": "volgograd", "title": "Волгоград"},
+                {"slug": "sochi", "title": "Сочи"},
             ]
         }
 

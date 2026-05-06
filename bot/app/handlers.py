@@ -46,13 +46,49 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await upsert_user(session, tg_user_id=update.effective_user.id, chat_id=update.effective_chat.id)
         await session.commit()
     await update.message.reply_text(
-        "Привет! Я помогу отслеживать новые объявления по вашим подпискам.",
+        "Привет! Управление каталогами и лентой теперь в Mini App.\n"
+        "Открой приложение кнопкой ниже.",
         reply_markup=main_menu_kb(webapp_url=settings.webapp_url),
     )
 
 
-async def cmd_subs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await show_subs(update, context)
+async def _render_profile_text(update: Update) -> str:
+    user = update.effective_user
+    if not user:
+        return "Не удалось получить данные профиля."
+    username = f"@{user.username}" if user.username else "не указан"
+    first_name = user.first_name or "—"
+    return (
+        "👤 Мой профиль\n\n"
+        f"Имя: `{first_name}`\n"
+        f"Username: `{username}`\n"
+        f"Telegram ID: `{user.id}`"
+    )
+
+
+async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _, settings, _ = _deps(context)
+    if not update.message:
+        return
+    text = await _render_profile_text(update)
+    await update.message.reply_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=main_menu_kb(webapp_url=settings.webapp_url),
+    )
+
+
+async def cb_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _, settings, _ = _deps(context)
+    if not update.callback_query or not update.callback_query.message:
+        return
+    text = await _render_profile_text(update)
+    await update.callback_query.message.edit_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=main_menu_kb(webapp_url=settings.webapp_url),
+    )
+    await update.callback_query.answer()
 
 
 async def show_subs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -333,13 +369,8 @@ def register_handlers(app: Application) -> None:
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("subs", cmd_subs))
+    app.add_handler(CommandHandler("profile", cmd_profile))
 
     app.add_handler(CallbackQueryHandler(nav_home, pattern=r"^nav:home$"))
-    app.add_handler(CallbackQueryHandler(cb_sub_list, pattern=r"^sub:list$"))
-    app.add_handler(add_sub_conv)
-    app.add_handler(CallbackQueryHandler(sub_open, pattern=r"^sub:open:\d+$"))
-    app.add_handler(CallbackQueryHandler(sub_pause, pattern=r"^sub:pause:\d+:\d+$"))
-    app.add_handler(CallbackQueryHandler(sub_del, pattern=r"^sub:del:\d+$"))
-    app.add_handler(CallbackQueryHandler(sub_peek, pattern=r"^sub:peek:\d+$"))
+    app.add_handler(CallbackQueryHandler(cb_profile, pattern=r"^profile:show$"))
 

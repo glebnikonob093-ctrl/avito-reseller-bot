@@ -113,6 +113,22 @@ body,
   gap: 8px;
 }
 
+.profileCard {
+  display: grid;
+  gap: 8px;
+}
+
+.profileRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(147, 197, 253, 0.2);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
 .btnSmall {
   font-size: 13px;
   padding: 6px 10px;

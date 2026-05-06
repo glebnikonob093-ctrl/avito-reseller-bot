@@ -6,13 +6,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 def main_menu_kb(*, webapp_url: str = "") -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if webapp_url:
-        rows.append([InlineKeyboardButton(text="🧾 Лента (Mini App)", web_app=WebAppInfo(url=webapp_url))])
-    rows.extend(
-        [
-            [InlineKeyboardButton(text="➕ Добавить подписку", callback_data="sub:add")],
-            [InlineKeyboardButton(text="📌 Мои подписки", callback_data="sub:list")],
-        ]
-    )
+        rows.append([InlineKeyboardButton(text="🧾 Открыть Mini App", web_app=WebAppInfo(url=webapp_url))])
+    rows.append([InlineKeyboardButton(text="👤 Мой профиль", callback_data="profile:show")])
     return InlineKeyboardMarkup(rows)
 
 
