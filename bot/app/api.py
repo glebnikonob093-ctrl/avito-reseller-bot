@@ -172,6 +172,37 @@ def create_api_app(
             await session.commit()
         return {"items": items, "sort": sort_by}
 
+    @app.get("/api/notifications")
+    async def notifications(limit: int = 20, user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:
+        safe_limit = max(1, min(100, int(limit)))
+        async with session_factory() as session:
+            db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
+            if not db_user:
+                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+            items = await list_feed_items_for_catalog(
+                session,
+                user_id=db_user.id,
+                catalog_id=None,
+                sort_by="newest",
+                limit=safe_limit,
+            )
+            await session.commit()
+        return {"items": items}
+
+    @app.get("/api/me")
+    async def me(user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:
+        async with session_factory() as session:
+            db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
+            if not db_user:
+                raise HTTPException(status_code=404, detail="User not found. Open bot and run /start first.")
+            await session.commit()
+        return {
+            "id": db_user.id,
+            "tg_user_id": db_user.tg_user_id,
+            "role": db_user.role or "user",
+            "is_admin": (db_user.role or "user") == "admin",
+        }
+
     @app.get("/api/catalogs")
     async def catalogs(user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:
         async with session_factory() as session:

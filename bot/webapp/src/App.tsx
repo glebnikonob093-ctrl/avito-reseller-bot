@@ -55,7 +55,7 @@ export function App() {
     return (fromEnv && fromEnv.trim()) || "http://127.0.0.1:8000";
   }, []);
 
-  const [tab, setTab] = useState<"feed" | "catalogs">("feed");
+  const [tab, setTab] = useState<"feed" | "catalogs" | "notifications">("feed");
   const [sortMode, setSortMode] = useState<"newest" | "best_deals">("newest");
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -64,6 +64,8 @@ export function App() {
   const [newCatalogRegion, setNewCatalogRegion] = useState("moskva");
   const [newCatalogQuery, setNewCatalogQuery] = useState("");
   const [items, setItems] = useState<FeedItem[]>([]);
+  const [notifications, setNotifications] = useState<FeedItem[]>([]);
+  const [userRole, setUserRole] = useState<"user" | "admin">("user");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
 
@@ -104,6 +106,29 @@ export function App() {
       setCatalogs(Array.isArray(body?.items) ? body.items : []);
     } catch (e: any) {
       setError(e?.message ? String(e.message) : "Не удалось загрузить каталоги");
+    }
+  }
+
+  async function loadNotifications() {
+    setError("");
+    try {
+      const body = await apiFetch("/api/notifications?limit=20");
+      setNotifications(Array.isArray(body?.items) ? body.items : []);
+    } catch (e: any) {
+      setError(e?.message ? String(e.message) : "Не удалось загрузить уведомления");
+    }
+  }
+
+  async function loadMe() {
+    try {
+      const body = await apiFetch("/api/me");
+      if (body?.role === "admin") {
+        setUserRole("admin");
+      } else {
+        setUserRole("user");
+      }
+    } catch {
+      // optional
     }
   }
 
@@ -174,6 +199,7 @@ export function App() {
     }
     void loadCategories();
     void loadCatalogs();
+    void loadMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -181,6 +207,13 @@ export function App() {
     void loadFeed();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortMode, catalogs.find((c) => c.is_selected)?.id, catalogs.length]);
+
+  useEffect(() => {
+    if (tab === "notifications") {
+      void loadNotifications();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   const scheme = tg?.colorScheme ?? "dark";
 
@@ -198,6 +231,7 @@ export function App() {
                   </>
                 ) : null}
                 {scheme === "dark" ? "Тёмная" : "Светлая"} тема
+                {userRole === "admin" ? " · admin" : ""}
               </div>
             </div>
             <button className="btn" onClick={loadFeed} disabled={loading}>
@@ -213,6 +247,12 @@ export function App() {
               onClick={() => setTab("catalogs")}
             >
               Каталоги
+            </button>
+            <button
+              className={`tabBtn ${tab === "notifications" ? "tabBtnActive" : ""}`}
+              onClick={() => setTab("notifications")}
+            >
+              Уведомления
             </button>
           </div>
         </div>
@@ -291,7 +331,7 @@ export function App() {
               ))}
             </div>
           </div>
-        ) : (
+        ) : tab === "feed" ? (
           <div className="card feedCard">
             <div className="sortRow">
               <button
@@ -358,6 +398,34 @@ export function App() {
             ))}
           </div>
         </div>
+        ) : (
+          <div className="card feedCard">
+            <div className="sectionTitle">Последние уведомления</div>
+            {!notifications.length && !error ? (
+              <div className="emptyState">
+                <div className="emptyEmoji">🔔</div>
+                <div className="emptyTitle">Уведомлений пока нет</div>
+                <div className="emptyText">Как только появятся новые позиции, они будут здесь.</div>
+              </div>
+            ) : null}
+            <div className="list">
+              {notifications.map((it) => (
+                <div className="itemCard" key={`n-${it.source}:${it.external_id}`}>
+                  <div className="itemTitle">{it.title || "Без названия"}</div>
+                  <div className="itemRow">
+                    <div className="price">{formatPrice(it.price)}</div>
+                    <div className="meta">{formatTime(it.first_seen_at)}</div>
+                  </div>
+                  <div className="meta">{it.city || "Город не указан"}</div>
+                  <div className="linkWrap">
+                    <a className="link" href={it.url} target="_blank" rel="noreferrer">
+                      Открыть объявление
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
     </div>
