@@ -20,6 +20,7 @@ from app.monitor import run_monitor_once
 from app.migrations import create_all
 from app.sources.avito_cloud_scrape import AvitoCloudScrapeSource
 from app.sources.avito_public_web import AvitoPublicWebSource
+from app.sources.duff_push import DuffPushSource
 from app.sources.mock_listings import MockListingsSource
 from app.sources.registry import SourceRegistry
 
@@ -55,18 +56,23 @@ async def _post_init(app: Application) -> None:
     await create_all(engine)
 
     session_factory = create_session_factory(engine)
+    registered_sources = [
+        AvitoCloudScrapeSource(
+            provider=settings.scraper_provider,
+            api_key=settings.scraper_api_key,
+        ),
+        AvitoPublicWebSource(
+            max_requests_per_minute=settings.max_requests_per_minute,
+            proxy_url=settings.source_proxy_url,
+        ),
+        MockListingsSource(),
+    ]
+    # Enable Duff89 webhook ingest only when a shared secret is configured.
+    # Without the secret the buffer cannot be written to safely.
+    if settings.duff_webhook_secret:
+        registered_sources.insert(0, DuffPushSource(session_factory=session_factory))
     sources = SourceRegistry(
-        [
-            AvitoCloudScrapeSource(
-                provider=settings.scraper_provider,
-                api_key=settings.scraper_api_key,
-            ),
-            AvitoPublicWebSource(
-                max_requests_per_minute=settings.max_requests_per_minute,
-                proxy_url=settings.source_proxy_url,
-            ),
-            MockListingsSource(),
-        ],
+        registered_sources,
         enable_mock_fallback=settings.enable_mock_fallback,
     )
 
@@ -93,6 +99,7 @@ async def _post_init(app: Application) -> None:
         max_requests_per_minute=settings.max_requests_per_minute,
         scraper_provider=settings.scraper_provider,
         scraper_api_key=settings.scraper_api_key,
+        duff_webhook_secret=settings.duff_webhook_secret,
     )
     config = uvicorn.Config(
         api_app,

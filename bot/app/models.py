@@ -87,3 +87,33 @@ class WorkItem(Base):
         UniqueConstraint("user_id", "source", "external_id", name="uq_work_item_user_source_ext"),
     )
 
+
+class PushedListing(Base):
+    """Buffer of listings ingested via the external push pipeline (e.g. Duff89/parser_avito).
+
+    The buffer is matched against catalog filters at read time so a single push can
+    serve multiple subscriptions. Older entries are pruned by a background task.
+    """
+
+    __tablename__ = "pushed_listings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    source: Mapped[str] = mapped_column(String(50), default="avito", index=True)
+    external_id: Mapped[str] = mapped_column(String(200), index=True)
+    url: Mapped[str] = mapped_column(String(500))
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    region: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    photo_url: Mapped[str | None] = mapped_column(String(800), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(800), nullable=True)
+    seller_profile_url: Mapped[str | None] = mapped_column(String(800), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("source", "external_id", name="uq_pushed_listing"),
+    )
+

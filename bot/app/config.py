@@ -38,6 +38,7 @@ class Settings:
     scraper_provider: str
     scraper_api_key: str
     enable_mock_fallback: bool
+    duff_webhook_secret: str
 
 
 def load_settings() -> Settings:
@@ -60,5 +61,6 @@ def load_settings() -> Settings:
         scraper_provider=os.getenv("SCRAPER_PROVIDER", "scraperapi").strip().lower(),
         scraper_api_key=os.getenv("SCRAPER_API_KEY", "").strip(),
         enable_mock_fallback=_get_bool("ENABLE_MOCK_FALLBACK", False),
+        duff_webhook_secret=os.getenv("DUFF_WEBHOOK_SECRET", "").strip(),
     )
 
