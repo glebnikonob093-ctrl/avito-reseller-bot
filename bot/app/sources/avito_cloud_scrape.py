@@ -35,10 +35,11 @@ class AvitoCloudScrapeSource(ListingsSource):
             "url": avito_url,
             "country_code": "ru",
             "keep_headers": "true",
-            # render=true asks the provider to wait for hydration so the
-            # mfe-state JSON we rely on is present in the response HTML.
-            "render": "true",
-            "device_type": "mobile",
+            # render=false: Avito returns SSR HTML with item-title selectors
+            # without needing JS hydration. render=true was timing out on the
+            # provider side (>60s) on mobile URLs.
+            "render": "false",
+            "device_type": "desktop",
         }
         return f"https://api.scraperapi.com/?{urlencode(params)}"
 

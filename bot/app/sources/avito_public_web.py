@@ -139,12 +139,18 @@ class AvitoPublicWebSource(ListingsSource):
     def _extract_listings(self, html: str, limit: int) -> list[Listing]:
         soup = BeautifulSoup(html, "lxml")
 
-        # Avito changes markup; we attempt a few heuristics:
-        anchors = soup.select('a[href*="/items/"]') or soup.select('a[data-marker="item-title"]')
+        # Prefer the per-item container so each title pairs with its own price.
+        containers = soup.select('div[data-marker="item"]')
         seen_urls: set[str] = set()
         out: list[Listing] = []
-        for a in anchors:
-            href = a.get("href") or ""
+        for container in containers:
+            a = container.select_one('a[data-marker="item-title"]') or container.select_one(
+                'a[itemprop="url"]'
+            )
+            if a is None:
+                continue
+            raw_href = a.get("href")
+            href = raw_href if isinstance(raw_href, str) else ""
             if not href:
                 continue
             if not href.startswith("http"):
@@ -157,21 +163,58 @@ class AvitoPublicWebSource(ListingsSource):
             if not title:
                 continue
 
-            # external_id heuristic: try to find numeric id in URL, else use URL
-            m = re.search(r"/(\d+)(?:\?|$)", href)
-            external_id = m.group(1) if m else href
+            container_id = container.get("data-item-id") or container.get("id") or ""
+            container_id_str = container_id if isinstance(container_id, str) else ""
+            external_id = container_id_str.lstrip("i") if container_id_str else ""
+            if not external_id:
+                m = re.search(r"_(\d+)(?:\?|$)", href) or re.search(r"/(\d+)(?:\?|$)", href)
+                external_id = m.group(1) if m else href
 
-            # try to locate a price nearby
-            price = None
-            parent = a.parent
-            if parent:
-                price_el = parent.select_one('[data-marker="item-price"]') or parent.select_one(
-                    '[data-marker="item-price"] span'
-                )
-                if price_el:
+            price: int | None = None
+            price_meta = container.select_one('meta[itemprop="price"]')
+            if price_meta is not None:
+                raw_price = price_meta.get("content") or ""
+                if isinstance(raw_price, str):
+                    price = self._parse_price(raw_price)
+            if price is None:
+                price_el = container.select_one('[data-marker="item-price"]')
+                if price_el is not None:
                     price = self._parse_price(price_el.get_text(" ", strip=True))
 
-            out.append(Listing(external_id=external_id, url=href, title=title, price=price))
+            photo_url: str | None = None
+            img = container.select_one('img[itemprop="image"]') or container.select_one(
+                '[data-marker="item-photo"] img'
+            )
+            if img is not None:
+                src = img.get("src")
+                if isinstance(src, str) and src:
+                    photo_url = src
+
+            city: str | None = None
+            geo = container.select_one('[data-marker="item-address"]') or container.select_one(
+                '[class*="geo-georeferences"]'
+            )
+            if geo is not None:
+                city = (geo.get_text(" ", strip=True) or "").strip() or None
+
+            description: str | None = None
+            desc_meta = container.select_one('meta[itemprop="description"]')
+            if desc_meta is not None:
+                raw_desc = desc_meta.get("content")
+                if isinstance(raw_desc, str) and raw_desc.strip():
+                    description = raw_desc.strip()
+
+            out.append(
+                Listing(
+                    external_id=external_id,
+                    url=href,
+                    title=title,
+                    price=price,
+                    city=city,
+                    photo_url=photo_url,
+                    description=description,
+                )
+            )
             if len(out) >= limit:
                 break
         return out
