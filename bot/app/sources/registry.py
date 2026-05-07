@@ -42,32 +42,44 @@ class SourceRegistry:
         }
 
     async def fetch_latest(self, sub: Subscription, limit: int):
+        cloud_attempted = False
+        cloud_reason = ""
         if sub.source == "avito_public_web":
             cloud = self._by_key.get("avito_cloud_scrape")
             if cloud:
+                cloud_attempted = True
+                has_cloud_key = bool(getattr(cloud, "_api_key", "").strip())
+                if not has_cloud_key:
+                    cloud_reason = "missing_api_key"
                 try:
                     items = await cloud.fetch_latest(sub, limit=limit)
                     if items:
                         self._set_status(source="avito_cloud_scrape", reason="ok", items=len(items))
                         return items
-                    self._set_status(source="avito_cloud_scrape", reason="empty", items=0)
+                    if not cloud_reason:
+                        cloud_reason = "empty"
                 except Exception as e:
-                    self._set_status(source="avito_cloud_scrape", reason=f"error:{type(e).__name__}", items=0)
+                    cloud_reason = f"error:{type(e).__name__}"
 
         primary = self.get(sub.source)
+        primary_reason = ""
         try:
             items = await primary.fetch_latest(sub, limit=limit)
             if items:
                 self._set_status(source=sub.source, reason="ok", items=len(items))
                 return items
-            self._set_status(source=sub.source, reason="empty", items=0)
+            primary_reason = "empty"
         except Exception as e:
-            self._set_status(source=sub.source, reason=f"error:{type(e).__name__}", items=0)
+            primary_reason = f"error:{type(e).__name__}"
         fallback = self._by_key.get("mock_fallback")
         if fallback and self._enable_mock_fallback:
             items = await fallback.fetch_latest(sub, limit=limit)
             self._set_status(source="mock_fallback", reason="ok", items=len(items))
             return items
-        self._set_status(source=sub.source, reason="no_real_data", items=0)
+        if cloud_attempted:
+            merged_reason = f"cloud_{cloud_reason or 'empty'}; public_{primary_reason or 'no_data'}"
+            self._set_status(source="avito_cloud_scrape", reason=merged_reason, items=0)
+        else:
+            self._set_status(source=sub.source, reason="no_real_data", items=0)
         return []
 
