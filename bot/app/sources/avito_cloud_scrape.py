@@ -43,6 +43,9 @@ class AvitoCloudScrapeSource(ListingsSource):
         if not self._api_key:
             return []
         html = await self._fetch_html(self._build_avito_url(sub))
+        items = self._parser._extract_from_mfe_state(html, limit=limit)
+        if items:
+            return items
         items = self._parser._extract_from_jsonld(html, limit=limit)
         if items:
             return items
@@ -54,7 +57,9 @@ class AvitoCloudScrapeSource(ListingsSource):
         try:
             html = await self._fetch_html(self._build_avito_url(sub))
             blocked = "captcha" in html.lower()
-            items = self._parser._extract_from_jsonld(html, limit=limit)
+            items = self._parser._extract_from_mfe_state(html, limit=limit)
+            if not items:
+                items = self._parser._extract_from_jsonld(html, limit=limit)
             if not items:
                 items = self._parser._extract_listings(html, limit=limit)
             if items:

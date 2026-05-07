@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from html import unescape
 from random import randint
 from urllib.parse import urlencode
 
@@ -212,15 +213,91 @@ class AvitoPublicWebSource(ListingsSource):
                     return out
         return out
 
+    def _extract_from_mfe_state(self, html: str, limit: int) -> list[Listing]:
+        soup = BeautifulSoup(html, "lxml")
+        state_data: dict | None = None
+        for script in soup.select("script"):
+            if script.get("type") == "mime/invalid" and script.get("data-mfe-state") == "true":
+                text = (script.get_text() or "").strip()
+                if not text or "sandbox" in text:
+                    continue
+                try:
+                    payload = json.loads(unescape(text))
+                except Exception:
+                    continue
+                maybe_data = payload.get("state", {}).get("data", {})
+                if isinstance(maybe_data, dict):
+                    state_data = maybe_data
+                    break
+        if not state_data:
+            return []
+
+        catalog = state_data.get("catalog") if isinstance(state_data, dict) else None
+        items = catalog.get("items") if isinstance(catalog, dict) else None
+        if not isinstance(items, list):
+            return []
+
+        out: list[Listing] = []
+        seen: set[str] = set()
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            raw_id = row.get("id")
+            external_id = str(raw_id).strip() if raw_id is not None else ""
+            if not external_id:
+                continue
+            if external_id in seen:
+                continue
+            seen.add(external_id)
+
+            url_path = str(row.get("urlPath") or "").strip()
+            if not url_path:
+                continue
+            if not url_path.startswith("http"):
+                if not url_path.startswith("/"):
+                    url_path = "/" + url_path
+                url = f"https://www.avito.ru{url_path}"
+            else:
+                url = url_path
+
+            title = str(row.get("title") or "").strip() or "Без названия"
+            price = None
+            pd = row.get("priceDetailed")
+            if isinstance(pd, dict):
+                pval = pd.get("value")
+                if pval is not None:
+                    try:
+                        price = int(pval)
+                    except Exception:
+                        price = None
+            if price is None:
+                p = row.get("price")
+                if p is not None:
+                    try:
+                        price = int(p)
+                    except Exception:
+                        price = self._parse_price(str(p))
+
+            out.append(Listing(external_id=external_id, url=url, title=title, price=price))
+            if len(out) >= limit:
+                return out
+        return out
+
     async def fetch_latest(self, sub: Subscription, limit: int) -> list[Listing]:
         mobile_url = self._build_mobile_url(sub)
         html_mobile = await self._get_html(mobile_url)
+        mobile_mfe = self._extract_from_mfe_state(html_mobile, limit=limit)
+        if mobile_mfe:
+            return mobile_mfe
         mobile_items = self._extract_from_jsonld(html_mobile, limit=limit)
         if mobile_items:
             return mobile_items
 
         url = self._build_url(sub)
         html = await self._get_html(url)
+        desktop_mfe = self._extract_from_mfe_state(html, limit=limit)
+        if desktop_mfe:
+            return desktop_mfe
         parsed = self._extract_listings(html, limit=limit)
         if parsed:
             return parsed
@@ -239,6 +316,10 @@ class AvitoPublicWebSource(ListingsSource):
             mobile_url = self._build_mobile_url(sub)
             html_mobile = await self._get_html(mobile_url)
             debug["mobile_captcha"] = "captcha" in html_mobile.lower()
+            mobile_mfe = self._extract_from_mfe_state(html_mobile, limit=limit)
+            if mobile_mfe:
+                debug["reason"] = "ok_mobile_mfe_state"
+                return mobile_mfe, debug
             mobile_items = self._extract_from_jsonld(html_mobile, limit=limit)
             debug["mobile_jsonld_items"] = len(mobile_items)
             if mobile_items:
@@ -251,6 +332,10 @@ class AvitoPublicWebSource(ListingsSource):
             url = self._build_url(sub)
             html = await self._get_html(url)
             debug["desktop_captcha"] = "captcha" in html.lower()
+            desktop_mfe = self._extract_from_mfe_state(html, limit=limit)
+            if desktop_mfe:
+                debug["reason"] = "ok_desktop_mfe_state"
+                return desktop_mfe, debug
             parsed = self._extract_listings(html, limit=limit)
             debug["desktop_selector_items"] = len(parsed)
             if parsed:
