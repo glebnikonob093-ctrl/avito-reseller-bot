@@ -67,6 +67,9 @@ type SourceStatus = {
 };
 
 function translateReason(reason: string): string {
+  // Match against substrings so combined backend reasons like
+  // "cloud:provider_auth:401; public:desktop_request_failed:..."
+  // still translate to a friendly message.
   const r = (reason || "").trim();
   if (!r) return "Источник вернул пусто. Попробуй ещё раз через минуту.";
   if (r === "ok") return "";
@@ -74,19 +77,21 @@ function translateReason(reason: string): string {
     return "Облачный парсер не настроен (нет ключа). Используется прямой парсинг.";
   if (r === "no_catalogs")
     return "Сначала создай каталог во вкладке «Каталоги».";
-  if (/timeout/i.test(r))
-    return "Источник долго не отвечает. Сеть тормозит — попробуй ещё раз.";
   if (/captcha|blocked/i.test(r))
     return "Avito временно блокирует автоматические запросы. Попробуй позже или подключи облачный парсер.";
+  if (/timeout/i.test(r))
+    return "Источник долго не отвечает. Сеть тормозит — попробуй ещё раз.";
   if (/rate_limited/i.test(r))
     return "Превышен лимит облачного парсера. Подожди немного.";
-  if (/auth:/i.test(r))
+  if (/provider_auth|auth:/i.test(r))
     return "Облачный парсер: ключ некорректен или отозван.";
-  if (/5xx|server_error/i.test(r))
+  if (/provider_5xx|5xx|server_error/i.test(r))
     return "Облачный парсер временно недоступен. Это лечится повторной попыткой.";
+  if (/request_failed|network/i.test(r))
+    return "Сеть не пускает напрямую. Включи облачный парсер или попробуй позже.";
   if (r === "empty" || r === "no_items_found" || r === "no_data")
     return "По текущим фильтрам ничего нет. Попробуй другой каталог или запрос.";
-  return `Источник вернул статус: ${r}`;
+  return "Источник пока ничего не нашёл. Попробуй ещё раз через минуту.";
 }
 
 function formatPrice(p: number | null) {

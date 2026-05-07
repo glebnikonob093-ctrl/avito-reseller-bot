@@ -219,25 +219,30 @@ def create_api_app(
         return {"items": items, "sort": sort_by}
 
     def _reason_user_message(reason: str) -> str:
+        # Match against substrings so combined reasons like
+        # "cloud:provider_auth:401; public:desktop_request_failed:..."
+        # still translate to a friendly message.
         if not reason:
             return "Источник вернул пусто. Попробуй ещё раз через минуту."
         if reason == "ok":
             return ""
         if reason == "missing_api_key":
             return "Облачный парсер не настроен (нет ключа). Используется прямой парсинг."
-        if reason.startswith("provider_timeout") or "timeout" in reason:
-            return "Источник долго не отвечает. Сеть тормозит — попробуй ещё раз."
         if "captcha" in reason or "blocked" in reason:
             return "Avito временно блокирует автоматические запросы. Попробуй позже или подключи облачный парсер."
-        if reason.startswith("provider_rate_limited"):
+        if "timeout" in reason:
+            return "Источник долго не отвечает. Сеть тормозит — попробуй ещё раз."
+        if "rate_limited" in reason:
             return "Превышен лимит облачного парсера. Подожди немного."
-        if reason.startswith("provider_auth"):
+        if "provider_auth" in reason:
             return "Облачный парсер: ключ некорректен или отозван."
-        if reason.startswith("provider_5xx"):
+        if "provider_5xx" in reason or "server_error" in reason:
             return "Облачный парсер временно недоступен. Это лечится повторной попыткой."
-        if reason == "empty" or reason == "no_items_found":
+        if "request_failed" in reason or "network" in reason:
+            return "Сеть не пускает напрямую. Включи облачный парсер или попробуй позже."
+        if reason in ("empty", "no_items_found", "no_data"):
             return "По текущим фильтрам ничего нет. Попробуй другой каталог или запрос."
-        return f"Источник вернул статус: {reason}"
+        return "Источник пока ничего не нашёл. Попробуй ещё раз через минуту."
 
     def _summarize_reason(primary: dict[str, Any], fallback: dict[str, Any]) -> str:
         # Prefer the "ok" branch; otherwise pick the more informative non-ok reason.
