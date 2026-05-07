@@ -71,28 +71,29 @@ class AvitoPublicWebSource(ListingsSource):
         return self._clients[key]
 
     def _build_url(self, sub: Subscription) -> str:
-        # Avito URL scheme varies; we use a conservative pattern:
-        # https://www.avito.ru/{region}/{category}?q=...&pmin=...&pmax=...&s=104 (sort by date)
+        # Avito returns SSR HTML with item-title selectors only on the
+        # default-sorted listing page. Adding s=104 (sort by date) flips the
+        # response to a JS-only "beduin" template with no items in the markup.
         base = f"https://www.avito.ru/{sub.region}/{sub.category}"
-        params: dict[str, str] = {"s": "104"}  # 104: by date (newest)
+        params: dict[str, str] = {}
         if sub.query:
             params["q"] = sub.query
         if sub.price_min is not None:
             params["pmin"] = str(sub.price_min)
         if sub.price_max is not None:
             params["pmax"] = str(sub.price_max)
-        return f"{base}?{urlencode(params)}"
+        return base if not params else f"{base}?{urlencode(params)}"
 
     def _build_mobile_url(self, sub: Subscription) -> str:
         base = f"https://m.avito.ru/{sub.region}/{sub.category}"
-        params: dict[str, str] = {"s": "104"}
+        params: dict[str, str] = {}
         if sub.query:
             params["q"] = sub.query
         if sub.price_min is not None:
             params["pmin"] = str(sub.price_min)
         if sub.price_max is not None:
             params["pmax"] = str(sub.price_max)
-        return f"{base}?{urlencode(params)}"
+        return base if not params else f"{base}?{urlencode(params)}"
 
     def _looks_blocked(self, html: str) -> bool:
         low = html.lower()
