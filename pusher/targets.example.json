@@ -1,0 +1,16 @@
+[
+  {
+    "label": "iPhone в Москве",
+    "url": "https://www.avito.ru/moskva/telefony?q=iphone&pmin=15000&pmax=80000",
+    "category": "telefony",
+    "region": "moskva",
+    "max_items": 30
+  },
+  {
+    "label": "MacBook в Питере",
+    "url": "https://www.avito.ru/sankt-peterburg/noutbuki?q=macbook&pmin=30000",
+    "category": "noutbuki",
+    "region": "sankt-peterburg",
+    "max_items": 30
+  }
+]
