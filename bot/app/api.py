@@ -26,8 +26,11 @@ from app.repos import (
     upsert_user,
     update_catalog,
 )
+from app.models import PushedListing
 from app.sources.avito_public_web import AvitoPublicWebSource
 from app.sources.avito_cloud_scrape import AvitoCloudScrapeSource
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 
 
 @dataclass(frozen=True)
@@ -149,6 +152,7 @@ def create_api_app(
     max_requests_per_minute: int = 20,
     scraper_provider: str = "scraperapi",
     scraper_api_key: str = "",
+    duff_webhook_secret: str = "",
 ) -> FastAPI:
     app = FastAPI(title="AvitoResellerBot API", version="0.1")
     live_source = AvitoPublicWebSource(
@@ -214,6 +218,47 @@ def create_api_app(
             await session.commit()
         return {"items": items, "sort": sort_by}
 
+    def _reason_user_message(reason: str) -> str:
+        # Match against substrings so combined reasons like
+        # "cloud:provider_auth:401; public:desktop_request_failed:..."
+        # still translate to a friendly message.
+        if not reason:
+            return "Источник вернул пусто. Попробуй ещё раз через минуту."
+        if reason == "ok":
+            return ""
+        if reason == "missing_api_key":
+            return "Облачный парсер не настроен (нет ключа). Используется прямой парсинг."
+        if "captcha" in reason or "blocked" in reason:
+            return "Avito временно блокирует автоматические запросы. Попробуй позже или подключи облачный парсер."
+        if "timeout" in reason:
+            return "Источник долго не отвечает. Сеть тормозит — попробуй ещё раз."
+        if "rate_limited" in reason:
+            return "Превышен лимит облачного парсера. Подожди немного."
+        if "provider_auth" in reason:
+            return "Облачный парсер: ключ некорректен или отозван."
+        if "provider_5xx" in reason or "server_error" in reason:
+            return "Облачный парсер временно недоступен. Это лечится повторной попыткой."
+        if "request_failed" in reason or "network" in reason:
+            return "Сеть не пускает напрямую. Включи облачный парсер или попробуй позже."
+        if reason in ("empty", "no_items_found", "no_data"):
+            return "По текущим фильтрам ничего нет. Попробуй другой каталог или запрос."
+        return "Источник пока ничего не нашёл. Попробуй ещё раз через минуту."
+
+    def _summarize_reason(primary: dict[str, Any], fallback: dict[str, Any]) -> str:
+        # Prefer the "ok" branch; otherwise pick the more informative non-ok reason.
+        for d in (primary, fallback):
+            if (d or {}).get("reason") == "ok":
+                return "ok"
+        primary_reason = (primary or {}).get("reason") or ""
+        fallback_reason = (fallback or {}).get("reason") or ""
+        # If both are missing/empty, default to "no_data".
+        if not primary_reason and not fallback_reason:
+            return "no_data"
+        # Combine to keep cause traceable in admin diagnostics.
+        if primary_reason and fallback_reason:
+            return f"cloud:{primary_reason}; public:{fallback_reason}"
+        return primary_reason or fallback_reason
+
     @app.get("/api/feed/live")
     async def feed_live(limit: int = 5, catalog_id: int | None = None, user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:
         safe_limit = max(1, min(5, int(limit)))
@@ -225,7 +270,16 @@ def create_api_app(
             await session.commit()
 
         if not catalogs_rows:
-            return {"items": [], "source": "avito_public_web", "live": True}
+            return {
+                "items": [],
+                "source": "avito_public_web",
+                "live": True,
+                "ok": False,
+                "reason": "no_catalogs",
+                "used_source": "",
+                "debug": {"reason": "no_catalogs"},
+                "user_message": "Сначала создай каталог во вкладке «Каталоги».",
+            }
 
         selected = None
         if catalog_id is not None:
@@ -237,16 +291,29 @@ def create_api_app(
             selected = next((c for c in catalogs_rows if bool(c.is_selected)), catalogs_rows[0])
 
         listings: list[Any] = []
-        debug: dict[str, Any] = {}
+        primary_debug: dict[str, Any] = {}
+        fallback_debug: dict[str, Any] = {}
+        used_source = "avito_public_web"
         if scraper_api_key:
-            listings, debug = await cloud_source.fetch_latest_with_debug(selected, limit=safe_limit)
+            listings, primary_debug = await cloud_source.fetch_latest_with_debug(selected, limit=safe_limit)
+            if listings:
+                used_source = "avito_cloud_scrape"
         if not listings:
             try:
                 fallback_items, fallback_debug = await live_source.fetch_latest_with_debug(selected, limit=safe_limit)
-                listings = fallback_items
-                debug = {"primary": debug, "fallback": fallback_debug}
-            except Exception:
-                debug = {"primary": debug, "fallback": {"reason": "live_source_failed"}}
+                if fallback_items:
+                    listings = fallback_items
+                    used_source = "avito_public_web"
+            except Exception as e:
+                fallback_debug = {"reason": f"live_source_failed:{type(e).__name__}"}
+
+        summary_reason = _summarize_reason(primary_debug, fallback_debug)
+        debug = {
+            "reason": summary_reason,
+            "primary": primary_debug,
+            "fallback": fallback_debug,
+            "used_source": used_source,
+        }
 
         items: list[dict[str, Any]] = []
         for it in listings:
@@ -258,7 +325,7 @@ def create_api_app(
                     "first_seen_at": it.published_at.isoformat() if it.published_at else None,
                     "subscription_id": selected.id,
                     "external_id": it.external_id,
-                    "source": "avito_public_web",
+                    "source": used_source,
                     "city": it.city,
                     "photo_url": it.photo_url,
                     "description": it.description,
@@ -268,7 +335,130 @@ def create_api_app(
                     "work_status": "new",
                 }
             )
-        return {"items": items, "source": "avito_public_web", "live": True, "debug": debug}
+        user_message = "" if items else _reason_user_message(summary_reason)
+        return {
+            "items": items,
+            "source": used_source,
+            "live": True,
+            "debug": debug,
+            "user_message": user_message,
+        }
+
+    @app.get("/api/source-status")
+    async def source_status(user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:
+        async with session_factory() as session:
+            db_user = await get_user_by_tg_user_id(session, tg_user_id=user.tg_user_id)
+            if not db_user:
+                db_user = await upsert_user(session, tg_user_id=user.tg_user_id, chat_id=user.tg_user_id)
+            pushed_count = 0
+            if duff_webhook_secret:
+                pushed_count = int(
+                    (
+                        await session.execute(select(func.count()).select_from(PushedListing))
+                    ).scalar_one()
+                )
+            await session.commit()
+        is_admin = (db_user.role or "user") == "admin"
+        return {
+            "cloud_provider": scraper_provider,
+            "cloud_configured": bool(scraper_api_key),
+            "public_proxy_configured": bool(source_proxy_url),
+            "duff_webhook_enabled": bool(duff_webhook_secret),
+            "duff_buffer_size": pushed_count,
+            "is_admin": is_admin,
+        }
+
+    class DuffListing(BaseModel):
+        external_id: str = Field(min_length=1, max_length=200)
+        url: str = Field(min_length=1, max_length=500)
+        title: str | None = Field(default=None, max_length=300)
+        price: int | None = None
+        city: str | None = Field(default=None, max_length=120)
+        category: str | None = Field(default=None, max_length=100)
+        region: str | None = Field(default=None, max_length=100)
+        photo_url: str | None = Field(default=None, max_length=800)
+        description: str | None = Field(default=None, max_length=800)
+        seller_profile_url: str | None = Field(default=None, max_length=800)
+        published_at: str | None = None  # ISO 8601 timestamp
+
+    class DuffWebhookPayload(BaseModel):
+        source: str = Field(default="avito", max_length=50)
+        items: list[DuffListing] = Field(default_factory=list)
+
+    def _verify_duff_signature(*, body: bytes, given: str) -> bool:
+        if not duff_webhook_secret or not given:
+            return False
+        # Header may be in form "sha256=...", strip the prefix.
+        token = given.strip()
+        if token.startswith("sha256="):
+            token = token.split("=", 1)[1].strip()
+        digest = hmac.new(
+            duff_webhook_secret.encode("utf-8"),
+            body,
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(digest, token)
+
+    def _parse_iso_dt(raw: str | None) -> datetime | None:
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    @app.post("/api/duff89/webhook")
+    async def duff_webhook(
+        payload: DuffWebhookPayload,
+        x_signature: str | None = Header(default=None, alias="X-Signature"),
+    ) -> dict[str, Any]:
+        if not duff_webhook_secret:
+            raise HTTPException(status_code=404, detail="Duff89 webhook is disabled")
+        # Recompute signature on the canonical JSON of the payload Pydantic
+        # parsed for us. Clients must use the same JSON serialization.
+        raw_body = payload.model_dump_json().encode("utf-8")
+        if not _verify_duff_signature(body=raw_body, given=x_signature or ""):
+            raise HTTPException(status_code=401, detail="Bad signature")
+
+        inserted = 0
+        skipped = 0
+        async with session_factory() as session:
+            # Prune very old buffer entries (older than ~24h) to keep buffer small.
+            cutoff = datetime.utcnow().timestamp() - 24 * 3600
+            try:
+                await session.execute(
+                    delete(PushedListing).where(
+                        PushedListing.received_at
+                        < datetime.fromtimestamp(cutoff)
+                    )
+                )
+            except Exception:
+                # Pruning is best-effort; ignore failures.
+                pass
+            for item in payload.items:
+                row = PushedListing(
+                    source=payload.source,
+                    external_id=item.external_id,
+                    url=item.url,
+                    title=item.title,
+                    price=item.price,
+                    city=item.city,
+                    category=item.category,
+                    region=item.region,
+                    photo_url=item.photo_url,
+                    description=item.description,
+                    seller_profile_url=item.seller_profile_url,
+                    published_at=_parse_iso_dt(item.published_at),
+                )
+                try:
+                    async with session.begin_nested():
+                        session.add(row)
+                        await session.flush()
+                    inserted += 1
+                except IntegrityError:
+                    skipped += 1
+            await session.commit()
+        return {"ok": True, "inserted": inserted, "skipped": skipped}
 
     @app.post("/api/work-status")
     async def update_work_status(payload: WorkStatusUpdate, user: TgWebAppUser = Depends(get_current_user)) -> dict[str, Any]:

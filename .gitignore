@@ -3,3 +3,7 @@ bot/webapp/dist/
 bot/data/*.db
 **/__pycache__/
 *.pyc
+.venv/
+bot/.venv/
+bot/.env
+bot/bot.env

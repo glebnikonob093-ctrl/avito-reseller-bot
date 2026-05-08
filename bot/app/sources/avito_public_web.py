@@ -25,16 +25,36 @@ class AvitoPublicWebSource(ListingsSource):
 
     key = "avito_public_web"
 
+    _USER_AGENTS = (
+        # Modern iOS Safari
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        # Modern Android Chrome
+        "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Mobile Safari/537.36",
+        # Modern desktop Chrome
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36",
+    )
+
     def __init__(self, *, max_requests_per_minute: int = 20, proxy_url: str = "") -> None:
         self._limiter = SimpleRateLimiter(max_per_minute=max_requests_per_minute)
         raw = (proxy_url or "").replace(";", ",")
         self._proxies = [p.strip() for p in raw.split(",") if p.strip()]
-        self._proxies.append("")  # direct connection fallback
+        # Always include a direct-connection fallback so the source still tries
+        # without a proxy when none is configured (or all configured ones fail).
+        self._proxies.append("")
         self._clients: dict[str, httpx.AsyncClient] = {}
+        self._ua_index = 0
 
     async def aclose(self) -> None:
         for c in self._clients.values():
             await c.aclose()
+
+    def _next_user_agent(self) -> str:
+        ua = self._USER_AGENTS[self._ua_index % len(self._USER_AGENTS)]
+        self._ua_index += 1
+        return ua
 
     def _get_client(self, proxy: str) -> httpx.AsyncClient:
         key = proxy.strip()
@@ -42,46 +62,44 @@ class AvitoPublicWebSource(ListingsSource):
             return self._clients[key]
         self._clients[key] = httpx.AsyncClient(
             proxy=(key or None),
-            timeout=httpx.Timeout(20.0),
+            timeout=httpx.Timeout(25.0),
             headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-                ),
                 "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         )
         return self._clients[key]
 
     def _build_url(self, sub: Subscription) -> str:
-        # Avito URL scheme varies; we use a conservative pattern:
-        # https://www.avito.ru/{region}/{category}?q=...&pmin=...&pmax=...&s=104 (sort by date)
+        # Avito returns SSR HTML with item-title selectors only on the
+        # default-sorted listing page. Adding s=104 (sort by date) flips the
+        # response to a JS-only "beduin" template with no items in the markup.
         base = f"https://www.avito.ru/{sub.region}/{sub.category}"
-        params: dict[str, str] = {"s": "104"}  # 104: by date (newest)
+        params: dict[str, str] = {}
         if sub.query:
             params["q"] = sub.query
         if sub.price_min is not None:
             params["pmin"] = str(sub.price_min)
         if sub.price_max is not None:
             params["pmax"] = str(sub.price_max)
-        return f"{base}?{urlencode(params)}"
+        return base if not params else f"{base}?{urlencode(params)}"
 
     def _build_mobile_url(self, sub: Subscription) -> str:
         base = f"https://m.avito.ru/{sub.region}/{sub.category}"
-        params: dict[str, str] = {"s": "104"}
+        params: dict[str, str] = {}
         if sub.query:
             params["q"] = sub.query
         if sub.price_min is not None:
             params["pmin"] = str(sub.price_min)
         if sub.price_max is not None:
             params["pmax"] = str(sub.price_max)
-        return f"{base}?{urlencode(params)}"
+        return base if not params else f"{base}?{urlencode(params)}"
 
     def _looks_blocked(self, html: str) -> bool:
         low = html.lower()
         return ("captcha" in low) or ("доступ ограничен" in low) or ("access denied" in low)
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=0.5, min=0.5, max=4))
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, min=0.5, max=6))
     async def _get_html(self, url: str) -> str:
         await self._limiter.wait()
         if not self._proxies:
@@ -92,9 +110,14 @@ class AvitoPublicWebSource(ListingsSource):
             proxy = self._proxies[(start + i) % len(self._proxies)]
             try:
                 client = self._get_client(proxy)
-                r = await client.get(url, follow_redirects=True)
+                r = await client.get(
+                    url,
+                    follow_redirects=True,
+                    headers={"User-Agent": self._next_user_agent()},
+                )
                 r.raise_for_status()
                 if self._looks_blocked(r.text):
+                    last_error = RuntimeError("blocked_or_captcha")
                     continue
                 return r.text
             except Exception as e:
@@ -116,12 +139,18 @@ class AvitoPublicWebSource(ListingsSource):
     def _extract_listings(self, html: str, limit: int) -> list[Listing]:
         soup = BeautifulSoup(html, "lxml")
 
-        # Avito changes markup; we attempt a few heuristics:
-        anchors = soup.select('a[href*="/items/"]') or soup.select('a[data-marker="item-title"]')
+        # Prefer the per-item container so each title pairs with its own price.
+        containers = soup.select('div[data-marker="item"]')
         seen_urls: set[str] = set()
         out: list[Listing] = []
-        for a in anchors:
-            href = a.get("href") or ""
+        for container in containers:
+            a = container.select_one('a[data-marker="item-title"]') or container.select_one(
+                'a[itemprop="url"]'
+            )
+            if a is None:
+                continue
+            raw_href = a.get("href")
+            href = raw_href if isinstance(raw_href, str) else ""
             if not href:
                 continue
             if not href.startswith("http"):
@@ -134,21 +163,58 @@ class AvitoPublicWebSource(ListingsSource):
             if not title:
                 continue
 
-            # external_id heuristic: try to find numeric id in URL, else use URL
-            m = re.search(r"/(\d+)(?:\?|$)", href)
-            external_id = m.group(1) if m else href
+            container_id = container.get("data-item-id") or container.get("id") or ""
+            container_id_str = container_id if isinstance(container_id, str) else ""
+            external_id = container_id_str.lstrip("i") if container_id_str else ""
+            if not external_id:
+                m = re.search(r"_(\d+)(?:\?|$)", href) or re.search(r"/(\d+)(?:\?|$)", href)
+                external_id = m.group(1) if m else href
 
-            # try to locate a price nearby
-            price = None
-            parent = a.parent
-            if parent:
-                price_el = parent.select_one('[data-marker="item-price"]') or parent.select_one(
-                    '[data-marker="item-price"] span'
-                )
-                if price_el:
+            price: int | None = None
+            price_meta = container.select_one('meta[itemprop="price"]')
+            if price_meta is not None:
+                raw_price = price_meta.get("content") or ""
+                if isinstance(raw_price, str):
+                    price = self._parse_price(raw_price)
+            if price is None:
+                price_el = container.select_one('[data-marker="item-price"]')
+                if price_el is not None:
                     price = self._parse_price(price_el.get_text(" ", strip=True))
 
-            out.append(Listing(external_id=external_id, url=href, title=title, price=price))
+            photo_url: str | None = None
+            img = container.select_one('img[itemprop="image"]') or container.select_one(
+                '[data-marker="item-photo"] img'
+            )
+            if img is not None:
+                src = img.get("src")
+                if isinstance(src, str) and src:
+                    photo_url = src
+
+            city: str | None = None
+            geo = container.select_one('[data-marker="item-address"]') or container.select_one(
+                '[class*="geo-georeferences"]'
+            )
+            if geo is not None:
+                city = (geo.get_text(" ", strip=True) or "").strip() or None
+
+            description: str | None = None
+            desc_meta = container.select_one('meta[itemprop="description"]')
+            if desc_meta is not None:
+                raw_desc = desc_meta.get("content")
+                if isinstance(raw_desc, str) and raw_desc.strip():
+                    description = raw_desc.strip()
+
+            out.append(
+                Listing(
+                    external_id=external_id,
+                    url=href,
+                    title=title,
+                    price=price,
+                    city=city,
+                    photo_url=photo_url,
+                    description=description,
+                )
+            )
             if len(out) >= limit:
                 break
         return out
@@ -303,6 +369,17 @@ class AvitoPublicWebSource(ListingsSource):
             return parsed
         return self._extract_from_jsonld(html, limit=limit)
 
+    def _classify_request_error(self, exc: Exception) -> str:
+        msg = str(exc).strip()
+        name = type(exc).__name__
+        if "blocked_or_captcha" in msg:
+            return "blocked_or_captcha"
+        if "Timeout" in name:
+            return "timeout"
+        if "ConnectError" in name or "RemoteProtocol" in name or "ReadError" in name:
+            return f"network:{name}"
+        return f"error:{name}"
+
     async def fetch_latest_with_debug(self, sub: Subscription, limit: int) -> tuple[list[Listing], dict]:
         debug: dict = {
             "mobile_captcha": False,
@@ -325,8 +402,8 @@ class AvitoPublicWebSource(ListingsSource):
             if mobile_items:
                 debug["reason"] = "ok_mobile_jsonld"
                 return mobile_items, debug
-        except Exception:
-            debug["reason"] = "mobile_request_failed"
+        except Exception as e:
+            debug["reason"] = f"mobile_request_failed:{self._classify_request_error(e)}"
 
         try:
             url = self._build_url(sub)
@@ -346,9 +423,10 @@ class AvitoPublicWebSource(ListingsSource):
             if jsonld_items:
                 debug["reason"] = "ok_desktop_jsonld"
                 return jsonld_items, debug
-        except Exception:
-            if not debug["reason"]:
-                debug["reason"] = "desktop_request_failed"
+        except Exception as e:
+            classified = f"desktop_request_failed:{self._classify_request_error(e)}"
+            if not debug["reason"] or debug["reason"].startswith("mobile_request_failed"):
+                debug["reason"] = classified
 
         if not debug["reason"]:
             debug["reason"] = "no_items_found"

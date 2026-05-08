@@ -50,6 +50,50 @@ type UserProfile = {
   is_admin: boolean;
 };
 
+type LiveStatus = {
+  ok: boolean;
+  message: string;
+  reason: string;
+  used_source: string;
+};
+
+type SourceStatus = {
+  cloud_provider: string;
+  cloud_configured: boolean;
+  public_proxy_configured: boolean;
+  duff_webhook_enabled: boolean;
+  duff_buffer_size: number;
+  is_admin: boolean;
+};
+
+function translateReason(reason: string): string {
+  // Match against substrings so combined backend reasons like
+  // "cloud:provider_auth:401; public:desktop_request_failed:..."
+  // still translate to a friendly message.
+  const r = (reason || "").trim();
+  if (!r) return "Источник вернул пусто. Попробуй ещё раз через минуту.";
+  if (r === "ok") return "";
+  if (r === "missing_api_key")
+    return "Облачный парсер не настроен (нет ключа). Используется прямой парсинг.";
+  if (r === "no_catalogs")
+    return "Сначала создай каталог во вкладке «Каталоги».";
+  if (/captcha|blocked/i.test(r))
+    return "Avito временно блокирует автоматические запросы. Попробуй позже или подключи облачный парсер.";
+  if (/timeout/i.test(r))
+    return "Источник долго не отвечает. Сеть тормозит — попробуй ещё раз.";
+  if (/rate_limited/i.test(r))
+    return "Превышен лимит облачного парсера. Подожди немного.";
+  if (/provider_auth|auth:/i.test(r))
+    return "Облачный парсер: ключ некорректен или отозван.";
+  if (/provider_5xx|5xx|server_error/i.test(r))
+    return "Облачный парсер временно недоступен. Это лечится повторной попыткой.";
+  if (/request_failed|network/i.test(r))
+    return "Сеть не пускает напрямую. Включи облачный парсер или попробуй позже.";
+  if (r === "empty" || r === "no_items_found" || r === "no_data")
+    return "По текущим фильтрам ничего нет. Попробуй другой каталог или запрос.";
+  return "Источник пока ничего не нашёл. Попробуй ещё раз через минуту.";
+}
+
 function formatPrice(p: number | null) {
   if (p === null || Number.isNaN(p)) return "—";
   return `${p.toLocaleString("ru-RU")} ₽`;
@@ -103,6 +147,8 @@ export function App() {
   const [loadingLive, setLoadingLive] = useState(false);
   const [error, setError] = useState<string>("");
   const [runtimeError, setRuntimeError] = useState("");
+  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
+  const [sourceStatus, setSourceStatus] = useState<SourceStatus | null>(null);
   const isApiReady = initData.trim().length > 0;
 
   async function apiFetch(path: string, init?: RequestInit) {
@@ -162,13 +208,31 @@ export function App() {
       const body = await apiFetch(`/api/feed/live?${qs.toString()}`);
       const rows = Array.isArray(body?.items) ? body.items : [];
       setItems(rows);
-      if (!rows.length && body?.debug?.reason) {
-        setError(`Live Avito: ${String(body.debug.reason)}`);
+      const ok = Boolean(body?.ok);
+      const reason: string = String(body?.reason || body?.debug?.reason || "");
+      const userMessage: string =
+        typeof body?.user_message === "string" && body.user_message
+          ? String(body.user_message)
+          : translateReason(reason);
+      const usedSource: string = String(body?.used_source || body?.debug?.used_source || "");
+      setLiveStatus({ ok, message: userMessage, reason, used_source: usedSource });
+      if (!rows.length && userMessage) {
+        setError(userMessage);
       }
     } catch (e: any) {
       setError(e?.message ? String(e.message) : "Не удалось загрузить live-объявления Avito");
     } finally {
       setLoadingLive(false);
+    }
+  }
+
+  async function loadSourceStatus() {
+    if (!isApiReady) return;
+    try {
+      const body = (await apiFetch("/api/source-status")) as SourceStatus;
+      setSourceStatus(body);
+    } catch {
+      // optional endpoint; silently ignore.
     }
   }
 
@@ -361,6 +425,7 @@ export function App() {
     void loadCategories();
     void loadCatalogs();
     void loadMe();
+    void loadSourceStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isApiReady]);
 
@@ -394,6 +459,8 @@ export function App() {
   const selectedCatalog = catalogs.find((c) => c.is_selected);
 
   function renderFeed() {
+    const showStatusBanner = liveStatus && liveStatus.message;
+    const liveBannerKind = liveStatus && liveStatus.ok ? "info" : "warn";
     return (
       <div className="card feedCard">
         <div className="sortRow">
@@ -413,6 +480,45 @@ export function App() {
             {loadingLive ? "Live..." : "Тест Avito (5)"}
           </button>
         </div>
+        {showStatusBanner ? (
+          <div
+            className="error"
+            style={{
+              marginTop: 8,
+              borderColor: liveBannerKind === "warn" ? "#a35a00" : "#3b6f3b",
+              background: liveBannerKind === "warn" ? "rgba(163,90,0,0.12)" : "rgba(59,111,59,0.12)",
+            }}
+          >
+            <div className="errorTitle">
+              {liveBannerKind === "warn" ? "Live-источник: проблема" : "Live-источник: ок"}
+            </div>
+            <div>{liveStatus?.message}</div>
+            {liveStatus?.used_source ? (
+              <div className="meta" style={{ marginTop: 4 }}>
+                Использован источник: <strong>{liveStatus.used_source}</strong>
+                {liveStatus?.reason ? ` · ${liveStatus.reason}` : ""}
+              </div>
+            ) : null}
+            <div style={{ marginTop: 8 }}>
+              <button
+                className="btn btnSmall"
+                onClick={() => void loadLiveFeed()}
+                disabled={loadingLive}
+              >
+                {loadingLive ? "Повторяю…" : "Повторить запрос"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {sourceStatus && sourceStatus.is_admin ? (
+          <div className="meta" style={{ marginTop: 6 }}>
+            Источники: cloud={sourceStatus.cloud_configured ? sourceStatus.cloud_provider : "off"}
+            {sourceStatus.public_proxy_configured ? " · proxy=on" : " · proxy=off"}
+            {sourceStatus.duff_webhook_enabled
+              ? ` · duff=on (buffer: ${sourceStatus.duff_buffer_size})`
+              : " · duff=off"}
+          </div>
+        ) : null}
         <div className="sortRow" style={{ marginTop: 8, flexWrap: "wrap" }}>
           <label className="meta">Deal score от</label>
           <input
