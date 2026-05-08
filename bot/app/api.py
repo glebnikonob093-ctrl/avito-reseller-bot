@@ -9,9 +9,9 @@ from typing import Any
 from urllib.parse import parse_qsl
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.repos import (
@@ -64,6 +64,25 @@ class WorkStatusUpdate(BaseModel):
     source: str
     external_id: str
     status: str = Field(pattern="^(new|contacted|negotiating|bought|sold)$")
+
+
+class DuffListing(BaseModel):
+    external_id: str = Field(min_length=1, max_length=200)
+    url: str = Field(min_length=1, max_length=500)
+    title: str | None = Field(default=None, max_length=300)
+    price: int | None = None
+    city: str | None = Field(default=None, max_length=120)
+    category: str | None = Field(default=None, max_length=100)
+    region: str | None = Field(default=None, max_length=100)
+    photo_url: str | None = Field(default=None, max_length=800)
+    description: str | None = Field(default=None, max_length=800)
+    seller_profile_url: str | None = Field(default=None, max_length=800)
+    published_at: str | None = None  # ISO 8601 timestamp
+
+
+class DuffWebhookPayload(BaseModel):
+    source: str = Field(default="avito", max_length=50)
+    items: list[DuffListing] = Field(default_factory=list)
 
 
 def _catalog_to_dict(sub: Any) -> dict[str, Any]:
@@ -368,23 +387,6 @@ def create_api_app(
             "is_admin": is_admin,
         }
 
-    class DuffListing(BaseModel):
-        external_id: str = Field(min_length=1, max_length=200)
-        url: str = Field(min_length=1, max_length=500)
-        title: str | None = Field(default=None, max_length=300)
-        price: int | None = None
-        city: str | None = Field(default=None, max_length=120)
-        category: str | None = Field(default=None, max_length=100)
-        region: str | None = Field(default=None, max_length=100)
-        photo_url: str | None = Field(default=None, max_length=800)
-        description: str | None = Field(default=None, max_length=800)
-        seller_profile_url: str | None = Field(default=None, max_length=800)
-        published_at: str | None = None  # ISO 8601 timestamp
-
-    class DuffWebhookPayload(BaseModel):
-        source: str = Field(default="avito", max_length=50)
-        items: list[DuffListing] = Field(default_factory=list)
-
     def _verify_duff_signature(*, body: bytes, given: str) -> bool:
         if not duff_webhook_secret or not given:
             return False
@@ -409,16 +411,22 @@ def create_api_app(
 
     @app.post("/api/duff89/webhook")
     async def duff_webhook(
-        payload: DuffWebhookPayload,
+        request: Request,
         x_signature: str | None = Header(default=None, alias="X-Signature"),
     ) -> dict[str, Any]:
         if not duff_webhook_secret:
             raise HTTPException(status_code=404, detail="Duff89 webhook is disabled")
-        # Recompute signature on the canonical JSON of the payload Pydantic
-        # parsed for us. Clients must use the same JSON serialization.
-        raw_body = payload.model_dump_json().encode("utf-8")
+        # Sign over the EXACT bytes received, not a re-serialized form. This
+        # avoids a subtle class of bugs where the client and server disagree on
+        # JSON formatting (key order, whitespace, ensure_ascii) and makes the
+        # HMAC scheme robust to any conforming JSON producer.
+        raw_body = await request.body()
         if not _verify_duff_signature(body=raw_body, given=x_signature or ""):
             raise HTTPException(status_code=401, detail="Bad signature")
+        try:
+            payload = DuffWebhookPayload.model_validate_json(raw_body)
+        except ValidationError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid payload: {e.errors()}")
 
         inserted = 0
         skipped = 0
